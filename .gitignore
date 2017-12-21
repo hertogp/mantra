@@ -1,9 +1,13 @@
 # Mantra
-# - scratch dir
+# - temporary dir's
 scr/
-# - tmp data
 tmp/
 
+# notes to self during development
+_notes.*
+
+# temporary files
+*.swp
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
