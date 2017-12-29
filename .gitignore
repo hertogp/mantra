@@ -1,7 +1,7 @@
 # Mantra
 # - temporary dir's
 scr/
-tmp/
+# tmp/  temp experiments
 
 # notes to self during development
 _notes.*
