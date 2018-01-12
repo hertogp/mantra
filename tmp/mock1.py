@@ -33,21 +33,26 @@ stylesheets = html.Div([
 #-- 2 app layout
 
 content_top = [
-    html.Div([html.I(className='fab fa-themeisle fa-3x',
-                     style={
-                        'color': 'midnightblue',
-                        'display': 'inline-block',
-                     }),
-              html.Label(['__MANTRA__'],
-                         style={
-                             'display': 'inline-block',
-                             'font-family': 'Monaco, Monospace',
-                             'font-size': '32px'
-                             # 'float': 'right'
-                         }),
-              ]),
+    html.Div(
+        # ROW with themeisle and logo
+        [
+            html.I(className='fab fa-themeisle fa-2x',
+                   style={
+                       'color': 'black',
+                       'display': 'inline-block',
+                   }),
+            html.Pre(' ',
+                     style={'display': 'inline-block'}),
+            html.Img(src='/static/img/mantra-space-age.png',
+                     # className='eight columns',
+                     style={'max-height': '30px',
+                            'max-width': '400px',
+                            'display': 'inline-block'})
+        ], className='row'),
+
 
     html.Div([
+        # ROW with dropdowns
         html.Div([
             # html.B('Filter tests'),
             dcc.Dropdown(
@@ -68,23 +73,23 @@ content_top = [
             )],
                  style={'display': 'inline-block'},
                  className='four columns'
-                 )
-    ]),
+                 ),
 
-    html.Div([
-        # html.B('Select a test'),
-        dcc.Dropdown(
-            id='quiz_select',
-            options=[
-                {'value': 't1', 'label': 'test-1'},
-                {'value': 't2', 'label': 'test-2'},
-            ],
-            value='',
-            placeholder='Select a test ...'
-        )],
-             style={'display': 'inline-block'},
-             className='eight columns'
-    ),
+            html.Div([
+                # html.B('Select a test'),
+                dcc.Dropdown(
+                    id='quiz_select',
+                    options=[
+                        {'value': 't1', 'label': 'test-1'},
+                        {'value': 't2', 'label': 'test-2'},
+                    ],
+                    value='',
+                    placeholder='Select a test ...'
+                )],
+                     style={'display': 'inline-block'},
+                     className='eight columns'
+            ),
+    ], className='row'),
 
     html.Div(
         className='twelve columns',
