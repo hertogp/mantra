@@ -9,6 +9,8 @@ import json
 from functools import wraps
 
 
+#-- dumpers
+
 class Jsonify(json.JSONEncoder):
     '''
     turn any unjsonifiable elements into repr(elm..)
@@ -20,6 +22,8 @@ class Jsonify(json.JSONEncoder):
 
     def default(self, arg):
         return repr(arg)
+
+jsondump = Jsonify(indent=4).encode
 
 
 def timethis(func):

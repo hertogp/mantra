@@ -5,7 +5,7 @@ import utils
 CONFIG = {
     'root': '/home/dta/mantra/docs/static',
     'logo': '/static/img/mantra-space-age.png',
-    'favicon': '/img/favicon-themeisle-black.ico',
+    'favicon': 'img/favicon.ico',
     'stylesheets': [
         '/static/css/chriddyp.css',
         '/static/css/fontawesome-all.css',
@@ -30,10 +30,3 @@ except Exception as e:
     print('failed to load the configuration')
     print('-', e)
     raise SystemExit(1)
-
-print('-'*80, 'CONFIG')
-jsondump = utils.Jsonify(indent=3).encode
-print(jsondump(CONFIG))
-print('^'*80)
-print()
-

@@ -1,99 +1,109 @@
 # -*- encoding: utf8 -*-
-
-import json
-import dash
 import dash.dependencies as dd
 import dash_core_components as dcc
 import dash_html_components as html
-from flask import send_from_directory
 
 # mantra imports
-import utils
-import config
-import layout
-jsondump = utils.Jsonify(indent=4).encode
+from config import CONFIG
+# Mantra app and pages: app_<page>'s
+from app import app
+import app_tests
+import app_review
+import app_upload
+import app_settings
 
-# pylint disable: E265
-
-
-# -- 0 config
-CONFIG = config.CONFIG
-
-# -- 1 app instance
-app = dash.Dash('__MANTRA__')
-app.config['suppress_callback_exceptions'] = True
-# app.css.config.serve_locally = True
-# - not needed due to app.server.route
-print('-'*80, 'APP')
-print(dir(app))
-print('- config', app.config)
-print('-'*80)
-
-# -- 2 app layout
-
-app.layout = layout.LAYOUT
-
-# -- 3 routing url's
-
-# the app.server.route('/static/<path:path>') eats the '/static/':
-# - path won't have the leading static part
-# - but app.server.route('/<path:path>' won't work
-# - so root dir needs to end with ../static
-@app.server.route('/static/<path:path>')
-def serve_static(path):
-    print('serve_static', path)
-    return send_from_directory(CONFIG['root'], path)
+PAGES = {
+    '/': app_tests,
+    app_tests.path: app_tests,
+    app_review.path: app_review,
+    app_upload.path: app_upload,
+    app_settings.path: app_settings,
+}
 
 
-@app.server.route('/favicon.ico')
-def serve_favicon():
-    # browser GET /favicon.ico for every page refresh/load
-    # - favicon must exist as a real file (png, gif or ico)
-    # - must be 16x16 or 32x32 pixels with 8- or 24-bit colors
-    print('favicon')
-    print('returning', CONFIG['favicon'])
-    return send_from_directory(CONFIG['root'], CONFIG['favicon'])
+app.layout = html.Div([
+    # HEADER, same across all pages
+    html.Div([
+        dcc.Location(id='mtr-url'),
 
-# -- 4 interaction
+        html.Div([
+            html.Link(rel='stylesheet',
+                      href=x) for x in CONFIG['stylesheets']
+        ]),
+
+        html.I(
+            className='fab fa-themeisle fa-2x',
+            style={
+                'color': 'black',
+                'display': 'inline-block',
+            }
+        ),
+
+        html.Pre('    ', style={'display': 'inline-block'}),
+        html.Img(
+            src=CONFIG['logo'],
+            style={'max-height': '30px',
+                   'max-width': '400px',
+                   'display': 'inline-block'}
+        ),
+
+        html.Div(
+            className="dropdown",
+            id='mtr-menu',
+            children=[
+                html.I(className='fa fa-bars fa-3x dropbtn'),
+                html.Div(
+                    className='dropdown-content',
+                    id='mtr-menu-content',
+                    children=[
+                        dcc.Link('tests', href='/tests'),
+                        dcc.Link('review', href='/review'),
+                        dcc.Link('upload', href='/upload'),
+                        dcc.Link('settings', href='/settings'),
+                    ]
+                ),
+            ]
+        ),
+
+        html.Div(
+            id='mtr-cache',
+            style={'display': 'none'}
+        )
+
+    ], className='row'),
+
+    # BODY
+    html.Div(
+        html.Div(id='mtr-page'),
+        className='row')
+])
+
+
+# -- dropdown menu
+@app.callback(
+    dd.Output('mtr-page', 'children'),
+    [dd.Input('mtr-url', 'pathname')])
+def goto_page(pathname):
+    page = PAGES.get(pathname, None)
+    if page is None:
+        return html.Div('404, {} - not found'.format(pathname))
+    return page.layout
+
 
 @app.callback(
-    dd.Output('stash-qz-choice', 'children'),
-    [dd.Input('myt-{}'.format(x), 'n_clicks') for x in range(3)],
-    [dd.State('stash-qz-choice', 'children')])
-def _stash_qz_choice(*args):
-    cur, prev = json.loads(args[-1])
-    now = args[0:-1]
-    for idx, (p, n) in enumerate(zip(prev, now)):
-        if n > p:
-            cur = idx
-            break
+    dd.Output('mtr-menu-content', 'children'),
+    [dd.Input('mtr-menu-content', 'n_clicks')],
+    [dd.State('mtr-url', 'pathname'),
+     dd.State('mtr-menu-content', 'children')])
+def set_active_link(clicks, pathname, menu_items):
+    page = PAGES.get(pathname, None)
+    page_path = '' if page is None else page.path
+    for item in menu_items:
+        prop = item['props']
+        href = prop.get('href', None)
+        prop['className'] = 'active' if href == page_path else ''
+    return menu_items
 
-    print('stash', cur, prev, '-', now)
-    return json.dumps([cur, now])
-
-# - qz-choice --> row selection callbacks
-#   click on row and change its class (+/- row-selected)
-def _row_selection_callback(row):
-    def callback(choice, cname):
-        print('selection_callback', row)
-        cur, prev = json.loads(choice)
-        if cur == row:
-            if 'row-selected' not in cname:
-                return (cname + ' row-selected').strip()
-            return cname
-        else:
-            return cname.replace('row-selected', '').strip()
-    return callback
-
-# create table row callbacks
-for ROW in range(3):
-    app.callback(
-        dd.Output('myt-{}'.format(ROW), 'className'),
-        [dd.Input('stash-qz-choice', 'children')],
-        [dd.State('myt-{}'.format(ROW), 'className')])(
-            _row_selection_callback(ROW))
-
-print(jsondump(app.callback_map))
 
 if __name__ == '__main__':
     app.run_server(debug=True)
