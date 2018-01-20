@@ -12,6 +12,10 @@ import app_review
 import app_upload
 import app_settings
 
+# pylint: disable=block-comment-should-start-with-#, E265
+
+#-- LAYOUT
+
 PAGES = {
     '/': app_tests,
     app_tests.path: app_tests,
@@ -86,7 +90,7 @@ app.layout = html.Div([
 def goto_page(pathname):
     page = PAGES.get(pathname, None)
     if page is None:
-        return html.Div('404, {} - not found'.format(pathname))
+        return html.Div('404 - {!r} - not found'.format(pathname))
     return page.layout
 
 

@@ -6,11 +6,18 @@ import dash_html_components as html
 import dash.dependencies as dd
 
 from app import app
+from utils import Proxy
 
 path = '/tests'
 
 layout = html.Div([
-    __doc__
+    __doc__,
+    Proxy(
+        html.Div([
+            'proxied div',
+            Proxy(html.Button('click me', id='delme')),
+        ], id='blah-blah'))
+
 ])
 
 

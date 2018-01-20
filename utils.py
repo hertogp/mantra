@@ -7,6 +7,7 @@ import pathlib
 import time
 import json
 from functools import wraps
+from inspect import ismethod, isfunction
 
 
 #-- dumpers
@@ -37,6 +38,70 @@ def timethis(func):
         print('{}.{} : {}'.format(func.__module__, func.__name__, end - start))
         return r
     return wrapper
+
+
+def trace(f):
+    'trace calls to f'
+    @wraps(f)
+    def wrapper(*a, **kw):
+        print('trace: {}({},{})'.format(f.__name__, a, kw))
+        rv = f(*a, **kw)
+        print(jsondump(rv))
+        return rv
+    return wrapper
+
+
+class Proxy(object):
+    '''
+    Proxy an object (instance) to show usage & behaviour
+
+    Example usage:
+      Proxy(html.Div('this is a div', id='blah'))
+    '''
+
+    def __init__(self, obj):
+        self._obj = obj
+        traced = []
+        for name in dir(obj):
+            attr = getattr(obj, name)
+            if ismethod(attr) or isfunction(attr):
+                traced.append(name)
+                setattr(obj, name, trace(attr))
+        print('-'*45, 'Proxy:', repr(obj), 'tracing:')
+        for t in traced:
+            print(' -', t)
+
+    # Delegate attribute lookup to internal obj
+    def __getattr__(self, name):
+        attr = getattr(self._obj, name)
+        print('-'*45, 'Proxy')
+        print('getattr:', name)
+        print(attr)
+        print('---')
+
+        return attr
+        # return getattr(self._obj, name)
+
+    # Delegate attribute assignment
+    def __setattr__(self, name, value):
+        if name.startswith('_'):
+            super().__setattr__(name, value)
+        else:
+            print('setattr:', name, value)
+            setattr(self._obj, name, value)
+
+    # Delegate attribute deletion
+    def __delattr__(self, name):
+        if name.startswith('_'):
+            super().__delattr__(name)
+        else:
+            print('delattr:', name)
+            delattr(self._obj, name)
+
+    # trace method calls
+    def __call__(self, *a, **kw):
+        print('cll', a, kw)
+        return self._obj.__call__(*a, **kw)
 
 
 # -- FILE operations
