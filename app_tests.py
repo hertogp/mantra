@@ -130,12 +130,19 @@ _layout = html.Div(
 
                         # test take MAX QUESTIONs
                         html.Div([
+                            dcc.Checklist(
+                                id='tests-limit-maxq',
+                                options=[{'value': 'yes', 'label': ' '}],
+                                values=[],
+                                style={'display': 'inline-block'},
+                                labelStyle={'display': 'inline-block'},
+                            ),
                             html.B('Max '),
                             dcc.Input(
                                 id='tests-max',
                                 type='number',
                                 min=0,
-                                value=15,
+                                value=10,
                                 style={'display': 'inline-block',
                                        'width': '5em',
                                        'height': '1.2em'
@@ -143,6 +150,34 @@ _layout = html.Div(
                             ),
                             html.Spacer(' '),
                             html.Label('questions',
+                                       style={'display': 'inline-block'}
+                                       )
+                        ],
+                                 style={'width': '100%'}
+                                 ),
+
+                        # limit time for test run
+                        html.Div([
+                            dcc.Checklist(
+                                id='tests-limit-time',
+                                options=[{'value': 'yes', 'label': ' '}],
+                                values=[],
+                                style={'display': 'inline-block'},
+                                labelStyle={'display': 'inline-block'},
+                            ),
+                            html.B('Limit to '),
+                            dcc.Input(
+                                id='tests-max-time',
+                                type='number',
+                                min=0,
+                                value=20,
+                                style={'display': 'inline-block',
+                                       'width': '5em',
+                                       'height': '1.2em'
+                                       },
+                            ),
+                            html.Spacer(' '),
+                            html.Label('minutes',
                                        style={'display': 'inline-block'}
                                        )
                         ],
@@ -201,8 +236,12 @@ _layout = html.Div(
      dd.Input('tests-mode', 'value'),
      dd.Input('tests-max', 'value'),
      dd.Input('tests-options', 'values'),
+     dd.Input('tests-limit-maxq', 'values'),
+     dd.Input('tests-limit-time', 'values'),
+     dd.Input('tests-max-time', 'value'),
      ])
-def cache_page(cats, fname, mode, maxq, options):
+def cache_page(cats, fname, mode, maxq, options,
+               limit_maxq, limit_time, max_time):
     'store page state in cache and controls for revisits'
     return json.dumps(
         [('tests-category', 'value', cats),
@@ -210,6 +249,9 @@ def cache_page(cats, fname, mode, maxq, options):
          ('tests-mode', 'value', mode),
          ('tests-max', 'value', maxq),
          ('tests-options', 'values', options),
+         ('tests-limit-maxq', 'values', limit_maxq),
+         ('tests-limit-time', 'values', limit_time),
+         ('tests-max-time', 'value', max_time),
          ])
 
 
