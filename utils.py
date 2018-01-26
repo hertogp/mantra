@@ -2,6 +2,7 @@
 Utilities for Mantra.
 '''
 
+import os
 import yaml
 import pathlib
 import time
@@ -122,13 +123,15 @@ def find_files(topdirs, suffixes, recurse=True):
             for fname in globdir(pattern):
                 if not fname.is_file():
                     continue
+                yield str(fname)
                 # fstat = fname.stat()
                 # ctime, mtime = fstat.st_ctime, fstat.st_mtime
-                subdir = fname.relative_to(topdir)
+                # subdir = fname.relative_to(topdir)
                 # cat = subdir.parts
                 # cat = cat[0] if len(cat) else ''
-                # yield (cat, topdir, subdir, ctime, mtime, fname.name)
-                yield (topdir, subdir, fname)
+                # subdir = os.sep.join(subdir.parts[0:-1])
+                # yield (topdir, cat, subdir, ctime, mtime, fname.name)
+                # yield (topdir, subdir, fname)
 
 
 # -- SETTINGs

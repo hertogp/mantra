@@ -78,4 +78,10 @@ h4 {
     background-color: aliceblue; /* #3e8e41; */
 }
 
+/* Button Styles */
+.btn-awesome {
+    border: 0px solid #bbb;
+    padding-left: 0px;
+    padding-right: 3px;
+}
 

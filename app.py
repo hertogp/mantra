@@ -14,14 +14,11 @@ app.title = 'Mantra'
 @app.server.route('/static/<path:path>')
 def serve_static(path):
     # root-dir is <some-path>/static
-    print('serve static:', path, '->', os.sep.join([CONFIG['root'], path]))
-    return send_from_directory(CONFIG['root'], path)
+    return send_from_directory(CONFIG['static'], path)
 
 
 @app.server.route('/favicon.ico')
 def serve_favicon():
-    # the browser does GET /favicon.ico for every page refresh/load
+    # the browser does GET /favicon.ico
     # - favicon: png, gif or ico; 15x16 or 32x32; 8- or 24-bit colors
-    print('serve favicon: ->', CONFIG['favicon'], '->',
-          os.sep.join([CONFIG['root'], CONFIG['favicon']]))
-    return send_from_directory(CONFIG['root'], CONFIG['favicon'])
+    return send_from_directory(CONFIG['static'], CONFIG['favicon'])
