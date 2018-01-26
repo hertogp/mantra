@@ -191,16 +191,18 @@ _layout = html.Div(
                             dcc.Checklist(
                                 id='tests-options',
                                 options=[
+                                    {'value': 'opt-skip-known',
+                                     'label': 'skip easy questions'},
                                     {'value': 'opt-random-q',
                                      'label': 'randomize questions'},
                                     {'value': 'opt-random-a',
                                      'label': 'randomize answers'},
                                     {'value': 'opt-show-p',
                                      'label': 'show progress'},
-
+                                    {'value': 'opt-show-score',
+                                     'label': 'show running score'},
                                 ],
-                                values=['opt-random-q', 'opt-random-a',
-                                        'opt-show-p'],
+                                values=['opt-random-q', 'opt-random-a'],
                                 style={'display': 'block'},
                                 labelStyle={'display': 'block'},
                             )
