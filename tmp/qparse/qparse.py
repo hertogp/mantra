@@ -9,7 +9,8 @@ from itertools import chain
 from io import StringIO
 
 # pylint disable: E265
-#-- helpers
+
+#-- helpers nopep8
 
 
 def as_block(key, value):
@@ -193,16 +194,18 @@ class IterPeek(object):
 
 
 class PandocAst(object):
-    '''Convert pandoc markdown to an AST and provide iterators
-    ast = PandocAst('file.md')
-    for token in ast:
+    '''
+    Convert pandoc markdown to an AST or load an existing AST;
+    provides iterators for headers & tokens.
+
+    ast = PandocAst('file.md')           # convert markdown to AST
+    for token in ast:                    # - iterate AST's tokens
         print(token)
 
-    # then, use separate instance to iterate across sub-ast
-    hdr = PandocAst()
-    for level, header in ast.headers:
-        for tok in hdr.load(ast=header):
-            print(tok)
+    hdr = PandocAst()                    # new instance
+    for level, header in ast.headers:    # - header is a sub-AST
+        for tok in hdr.load(ast=header): # - load sub-AT and
+            print(tok)                   #   iterate its tokens
     '''
     MD_XTRA = ['--atx-header', '--standalone']
     MD_OPTS = [  # 'hard_line_breaks',
@@ -230,11 +233,6 @@ class PandocAst(object):
                     src = f.read()
                     txt = pp.convert_text(src, 'json', format=self.fmt)
                     self.meta, self.ast = json.loads(txt)
-                    print(txt)
-                    print()
-                    print(self.meta)
-                    print()
-                    print(self.ast)
                 except Exception as e:
                     raise QError("Can't convert {}: {}".format(self.source, e))
 
@@ -269,7 +267,7 @@ class PandocAst(object):
 
 
 class Parser(object):
-    'Turn a markdown text into a quiz with 0 or more questions'
+    'Parse a PandocAst into a Quiz with 0 or more questions'
     def __init__(self, in_fmt=None, opts=None):
         self.fmt = in_fmt
         self.opts = opts
@@ -278,7 +276,7 @@ class Parser(object):
         self.qstn = []    # the list of questions
 
     def parse(self, ast):
-        'parse source or ast and return a quiz object w/ 0 or more questions'
+        'parse ast and return a quiz object w/ 0 or more questions'
         self.meta.update(ast.meta)                 # keep existing meta data
 
         # adopt any YAML defined tags, add as level-0 tags (self.tags[0])
@@ -289,7 +287,7 @@ class Parser(object):
             tags = pf.stringify(val).lower().replace(',', ' ').split()
             self.tags[0] = sorted(set().union(self.tags[0], tags))
 
-        # process front matter and subsequent headers (the latter as questions)
+        # process front matter and subsequent headers as questions
         for level, hdr in ast.headers:
             if level == 0:
                 self._front_matter(hdr)
@@ -297,21 +295,8 @@ class Parser(object):
                 self.qstn.append(self.question(ast=hdr))
         return self
 
-    def _front_matter(self, ast):
-        'parse stuff before the first header'
-        # only pick up any additional tags, ignore the rest
-        for _token in PandocAst(ast=ast).tokens:
-            if _token.type != u'Para':
-                continue
-            if _token.value[0]['t'] != u'Str':
-                continue
-            if _token.value[0]['c'].lower() != 'tags:':
-                continue
-            tagstr = pf.stringify(_token.value[1:]).replace(',', ' ').lower()
-            self.tags[0] = sorted(set().union(self.tags[0], tagstr.split()))
-
     def question(self, ast):
-        'turn header-ast into a single question, if possible'
+        'turn a header-ast into a single question, if possible'
         qstn = Closure(level=0,       # header level of this question
                        tags=[],       # qstn's tags (inherits self.TAGS)
                        section='',    # section tag to tally score per topic
@@ -346,11 +331,18 @@ class Parser(object):
                             ])
         return qstn
 
-    # def _add_field(self, qstn, field):
-    #     'add wtforms field to qstn & return accompanying {{ form.qfield_<nr> }} as ast'
-    #     fld_num = len(qstn.fields)
-    #     qstn.fields.append(field)
-    #     return PandocAst(source='{{ form.qfield_%d()|safe }}' % fld_num).ast
+    def _front_matter(self, ast):
+        'parse stuff before the first header'
+        # only pick up any additional tags, ignore the rest
+        for _token in PandocAst(ast=ast).tokens:
+            if _token.type != u'Para':
+                continue
+            if _token.value[0]['t'] != u'Str':
+                continue
+            if _token.value[0]['c'].lower() != 'tags:':
+                continue
+            tagstr = pf.stringify(_token.value[1:]).replace(',', ' ').lower()
+            self.tags[0] = sorted(set().union(self.tags[0], tagstr.split()))
 
     def _header(self, key, val, qstn):
         'header starts a new question'
