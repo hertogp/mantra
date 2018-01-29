@@ -503,7 +503,7 @@ if __name__ == '__main__':
 
     p = Parser().parse(ast=ast)
     print('Parser.meta', p.meta)
-    print('Parser.tags', p.tags)
+    print('Parser.tags', json.dumps(p.tags, indent=3))
     print()
     for q in p.qstn:
         print('-'*80)
