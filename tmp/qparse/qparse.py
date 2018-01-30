@@ -8,6 +8,14 @@ from collections import namedtuple
 from itertools import chain
 from io import StringIO
 
+
+# Notes:
+# - ROOT/docs/<category>/<filename>.{zip, md}  = test w or w/o img's
+# - ROOT/static/qn/<hash_id>/q01.md? + images
+# -or-
+# - ROOT/docs/<category>/<subcat>/../<filename>.md + imgs
+#   hash_id = hash(category/subcat/../filename.md)
+# - ROOT/static/qz/<hash_id>/filename.md + q<n>.md + img<n>.png
 # pylint disable: E265
 
 #-- helpers nopep8
@@ -268,24 +276,27 @@ class PandocAst(object):
 
 class Parser(object):
     'Parse a PandocAst into a Quiz with 0 or more questions'
+    # an Attribute Para starts with one of these:
+    ATTR_KEYWORDS = ['tags:', 'answer:', 'explanation:', 'section:']
+
     def __init__(self, in_fmt=None, opts=None):
         self.fmt = in_fmt
         self.opts = opts
         self.meta = {u'unMeta': {}}
-        self.tags = [[]]  # quiz tags are level 0 tags
-        self.qstn = []    # the list of questions
+        self.tags = [[]]  # list of tag-list per header level (=idx)
+        self.qstn = []    # the list of Question instances
 
     def parse(self, ast):
         'parse ast and return a quiz object w/ 0 or more questions'
         self.meta.update(ast.meta)                 # keep existing meta data
 
-        # adopt any YAML defined tags, add as level-0 tags (self.tags[0])
+        # adopt any level-0 tags: defined in the YAML part (self.tags[0])
         unmeta = self.meta.get(u'unMeta', {})
         for key, val in unmeta.items():
             if key.lower() != 'tags':
                 continue
             tags = pf.stringify(val).lower().replace(',', ' ').split()
-            self.tags[0] = sorted(set().union(self.tags[0], tags))
+            self.tags[0] = sorted(set(self.tags[0] + tags))
 
         # process front matter and subsequent headers as questions
         for level, hdr in ast.headers:
@@ -299,13 +310,13 @@ class Parser(object):
         'turn a header-ast into a single question, if possible'
         qstn = Closure(level=0,       # header level of this question
                        tags=[],       # qstn's tags (inherits self.TAGS)
-                       section='',    # section tag to tally score per topic
+                       section='',    # section keyword
                        title=[],      # q's title
-                       text=[],       # q's text
-                       choices=[],    # q's possible answers
-                       answer=[],     # q's correct answer(s)
-                       explain=[],    # explanation of the answer(s)
-                       ast=[],        # qstn's ast
+                       text=[],       # q's text in markdown
+                       choices=[],    # q's possible answers (ordered list)
+                       answer=[],     # q's correct answer(s) (list of letters)
+                       explain=[],    # explanation of the answer
+                       ast=[],        # qstn's ast with attributes removed
                        markdown='')   # qstn's orginal markdown
 
         ast = PandocAst(ast=ast)
@@ -317,19 +328,66 @@ class Parser(object):
                 self._para(key, val, qstn)
             elif key == u'OrderedList':
                 self._orderedlist(key, val, qstn)
-            elif key == u'CodeBlock':
-                self._codeblock(key, val, qstn)
             else:
                 qstn.ast.append(as_block(key, val))
 
-        # question's dynamic child template, which extends qbase.html & fills
-        # in its {% block question %} using qstn's ast
-        qstn.tpl = ''.join(['{% extends "quiz/qbase.html" %}',
-                            '{% block question %}',
-                            PandocAst(ast=qstn.ast).convert('html'),
-                            '{% endblock %}'
-                            ])
+        qstn.text = PandocAst(ast=qstn.ast).convert('markdown')
         return qstn
+
+    def _para_attr(self, para):
+        'extract any attributes from para and return the rest'
+        # An attribute Para starts with a known attribute: keyword
+        # - parameter para is the 'c'-val from {'t': 'Para', 'c': [...]}
+        # - list of words may span multiple lines
+        # - explanation: is the only attr whose value is markdown text.
+
+        attrs = {}  # attrs{attr} -> sub-ast
+        # check if para starts with an attribute keyword, if not return {}
+        try:
+            if para[0]['t'] != 'Str':
+                return attrs
+            attr = para[0]['c'].lower()
+            if attr not in self.ATTR_KEYWORDS:
+                return attrs
+        except Exception:
+            return attrs
+
+        # collect subast per attribute in ATTR_KEYWORDS
+        ptr = attrs.setdefault(attr, [])
+        for key, val in PandocAst(ast=para).tokens:
+            if key != 'Str':
+                ptr.append(as_block(key, val))    # append non-Str to ptr
+                continue
+            attr = val.lower()
+            if attr in self.ATTR_KEYWORDS:
+                ptr = attrs.setdefault(attr, [])  # new collection ptr
+                continue
+            ptr.append(as_block(key, val))        # append to ptr
+
+        # process known attributes
+        for attr, subast in attrs.items():
+            if attr not in self.ATTR_KEYWORDS:
+                continue
+            if attr == 'explanation:':
+                attrs[attr] = PandocAst(ast=as_ast('Para',
+                                                  subast)).convert('markdown')
+            elif attr == 'tags:':
+                # list of words, possibly separated by spaces and/or comma's
+                words = pf.stringify(subast).replace(',', ' ').lower()
+                attrs[attr] = sorted(set(words.split()))
+
+            elif attr == 'answer:':
+                # list of letters, possible separated by spaces or comma's
+                answers = pf.stringify(subast).lower()
+                attrs[attr] = sorted(set(x for x in answers if x.isalpha()))
+
+            elif attr == 'section:':
+                words = pf.stringify(subast).replace(',', ' ').lower()
+                attrs[attr] = words.split()[0]  # keep only 1st word
+
+        for attr, val in attrs.items():
+            print(attr, val)
+        return attrs
 
     def _front_matter(self, ast):
         'parse stuff before the first header'
@@ -347,91 +405,38 @@ class Parser(object):
     def _header(self, key, val, qstn):
         'header starts a new question'
         # Header -> [level, [slug, [(key,val),..]], [header-blocks]]
-        print('_header', key, val)
         qstn.level = val[0]
-        qstn.title = PandocAst(ast=as_ast(key, val)).convert('commonmark')
+        qstn.title = PandocAst(ast=as_ast(key, val)).convert('markdown')
 
     def _para(self, key, val, qstn):
-        # TODO: allow for multiple keywords: values in single paragraph
         # Para -> [Block], might be an <attribute:>-para
         if len(val) < 1:
             return  # nothing todo
 
-        if val[0]['t'] != u'Str' or not val[0]['c'].endswith(':'):
-            para = None                        # para is not attr para
-            attr = []
+        attrs = self._para_attr(val)
+        if len(attrs):
+            qstn.answer = attrs.get('answer:', [])
+            qstn.tags = attrs.get('tags:', [])
+            qstn.section = attrs.get('section:', '')
+            qstn.explain = attrs.get('explanation:', '')
         else:
-            para = val[0]['c'].lower()[0:-1]   # pickup 1st word as attr name
-            attr = val[1:]                     # remaining text is attr value
-
-        # handle known types of Para's
-        if para == 'tags':
-            # tags: tag1, tag2, ...
-            tags = pf.stringify(attr).replace(',', ' ').lower().split()
-            self.tags = (self.tags + [[]]*qstn.level)[0:qstn.level]
-            self.tags.append(tags)
-            qstn.tags = sorted(set().union(*self.tags))
-
-        elif para == 'answer':
-            # answer: A,c  (the answer to a some previous orderedlist-field)
-            qstn.answer = pf.stringify(attr).replace(',', ' ').lower().split()
-
-        elif para == 'explanation':
-            # explanation: <regular markdown explaining the answer>
-            expl = PandocAst(ast=as_ast(key, val)).convert('commonmark')
-            qstn.explain.append(expl)  # append normal paragraph
-
-        else:
-            # not a special para, so part of question text
-            # but might still contain in-line `<fieldType>`{...} constructs
-            blocks = []
-            for tokk, tokv in PandocAst(ast=val).tokens:
-                if tokk != u'Code':
-                    blocks.append(as_block(tokk, tokv))
-                    continue
-                (ID, CLASS, ATTR), CODE = tokv
-                print('-'*80, 'para Code block', CODE)
-                print(ID, CLASS, ATTR)
-
-                # # ensure lower case code, attr.keys & stripped list elements
-                # CODE = CODE.lower()
-                # ATTR = dict((k.lower(), v.split(',')) for k, v in ATTR)
-                # choices = [s.strip() for s in ATTR.get('choices', [])]
-                # answer = [s.strip() for s in ATTR.get('answer', [])]
-
-                # # if applicable, keep {{ form.field_<x> }} in-line -> in blocks
-                # if CODE == 'fill':
-                #     # an input field to type text into
-                #     blocks.appnd(as_block('Str', 'code-is-fill'))
-                # elif CODE == 'select':
-                #     # a dropdown to select one entry from a list of choices
-                #     # TODO: check len answer is 1, answer occurs in choices
-                #     choices = list(enumerate(choices))  # [(idx, value), ..]
-                #     assert len(answer) == 1  # TODO raise QFieldError instead
-                #     answer = answer[0]       # answer should also be in choices
-                #     # XXX: turn answer into its index? DDF is coerce=int'd anyway..
-                #     wtf_fld = DropDownField(choices=choices, answer=answer)
-                #     wtf_ast = self._add_field(qstn, wtf_fld)
-                #     blocks.extend(wtf_ast[0]['c'])  # inline, so skip outer Para
-                # else:
-                #     blocks.append(as_block(tokk, tokv))
-
-            qstn.ast.append(as_block(key, blocks))  # append as normal paragraph
+            qstn.ast.append(as_block(key, val))  # append as normal paragraph
 
     def _orderedlist(self, key, val, qstn):
         'An OrderedList is a multiple-choice (or multiple-correct) element'
         # OrderedList -> ListAttributes [[Block]]
         # - ListAttributes = (Int, ListNumberStyle, ListNumberDelim)
-        (num, style, delim), items = val
-        style = style.get('t')
-        delim = delim.get('t')
+        # - the first OrderedList is the choices-list for the question
+        if len(qstn.choices) > 0:
+            qstn.ast.append(as_block(key, val))
+        else:
+            (num, style, delim), items = val
+            style = style.get('t')
+            delim = delim.get('t')
 
-        qstn.choices = list((ol_num(n+1, style),
-                             PandocAst(ast=item).convert('commonmark'))
-                            for n, item in enumerate(items))
-
-        # keep block in org ast
-        qstn.ast.append(as_block(key, val))
+            for n, item in enumerate(items):
+                txt = PandocAst(ast=item).convert('markdown').strip()
+                qstn.choices.append((ol_num(n+1, style), txt))
 
     def _codeblock(self, key, val, qstn):
         # [[id, [classes,..], [(key,val),..]], string]
@@ -493,18 +498,16 @@ if __name__ == '__main__':
     #     print(token.type)
     #     pprint.pprint(token.value, indent=4)
 
-    p = Parser().parse(ast=ast)
-    print('Parser.meta', p.meta)
-    print('Parser.tags', p.tags)
+    qz = Parser().parse(ast=ast)
+    print('quiz.meta', qz.meta)
+    print('quiz.tags', qz.tags)
     print()
-    for q in p.qstn:
+    for q in qz.qstn:
         print('-'*80)
-        print('Question', q.title)
-        print('\n- tags\n', q.tags)
-        print('\n- title\n', q.title)
-        print('\n- text\n', q.text)
-        print('\n- choices\n', q.choices)
-        print('\n- answer\n', q.answer)
-        print('\n- explain\n', q.explain)
-        print('\n- markdown\n', q.markdown)
-        print('\n- ast\n', q.ast)
+        print(q.title)
+        print('- tags', q.tags)
+        print('- text', q.text)
+        print('- choices', q.choices)
+        print('- answer', q.answer)
+        print('- explaination', q.explain)
+        print('- markdown\n', q.markdown)

@@ -27,7 +27,7 @@ if True:
 
 Tags: ipv6
 Answer: AE
-Section: ipv6
+Section: ipv6, ipv9
 Explanation:
 There is **NO** explanation here ...!
 
@@ -53,13 +53,31 @@ Another hint `fill-in the blank`{
 answer='a'
 }
 
+a. Yes
+b. No
+
 tags: python
 section: programming
-answer: False
+answer: b
 explanation:
-n is in range \[0, 10), excluding right limit, so its maximum value
+`n` is in range \[0, 10), excluding the right limit, so its maximum value
 is 9.  So nothing is printed.
 
 # Multiple-choice
-todo
+In which other format can the IPv6 address
+fd15:0db8:0000:0000:0700:0003:400F:572B be written?
+
+a. fd15:0db8:0000:0000:700:3:400F:527B
+b. fd15::db8::700:3:400F:527B
+c. fd15:db8:0::700:3:4F:527B
+d. fd15:0db8::7:3:4F:527B
+e. fd15:db8::700:3:400F:572B
+
+
+Tags: ipv6
+Answer: E
+Section: ipv6, ipv9
+Explanation:
+There is **NO** explanation here ...!
+
 
