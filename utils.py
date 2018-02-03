@@ -2,7 +2,8 @@
 Utilities for Mantra.
 '''
 
-import os
+import base64
+import struct
 import yaml
 import pathlib
 import time
@@ -104,6 +105,41 @@ class Proxy(object):
         print('cll', a, kw)
         return self._obj.__call__(*a, **kw)
 
+# -- HASH ops
+
+
+def fnv64(data):
+    hash_ = 0xcbf29ce484222325
+    for b in data:
+        hash_ *= 0x100000001b3
+        hash_ &= 0xffffffffffffffff
+        hash_ ^= b
+    return hash_
+
+def hash_dn(dn, salt):
+    # Turn dn into bytes with a salt, dn is expected to be ascii data
+    data = salt.encode("ascii") + dn.encode("ascii")
+    # Hash data
+    hash_ = fnv64(data)
+    # Pack hash (int) into bytes
+    bhash = struct.pack("<Q", hash_)
+    # Encode in base64. There is always a padding "=" at the end, because the
+    # hash is always 64bits long. We don't need it.
+    return base64.urlsafe_b64encode(bhash)[:-1].decode("ascii")
+
+
+def hashfnv64(text, salt=''):
+    'fnv64 hash of text'
+    salt = salt or 'mantra!'
+    data = salt.encode('ascii') + text.encode('ascii')
+    hash_n = 0xcbf29ce484222325
+    for b in data:
+        hash_n *= 0x100000001b3
+        hash_n &= 0xffffffffffffffff
+        hash_n ^= b
+    hash_b = struct.pack('<Q', hash_n)
+    return base64.urlsafe_b64encode(hash_b)[:-1].decode('ascii')
+
 
 # -- FILE operations
 
@@ -124,14 +160,6 @@ def find_files(topdirs, suffixes, recurse=True):
                 if not fname.is_file():
                     continue
                 yield str(fname)
-                # fstat = fname.stat()
-                # ctime, mtime = fstat.st_ctime, fstat.st_mtime
-                # subdir = fname.relative_to(topdir)
-                # cat = subdir.parts
-                # cat = cat[0] if len(cat) else ''
-                # subdir = os.sep.join(subdir.parts[0:-1])
-                # yield (topdir, cat, subdir, ctime, mtime, fname.name)
-                # yield (topdir, subdir, fname)
 
 
 # -- SETTINGs
@@ -148,8 +176,6 @@ def load_config(filename):
         print('Error in yaml config')
         print(repr(e))
         raise SystemExit(1)
-
-    # TODO: sanitize dir- and filenames?
 
     return cfg
 

@@ -80,4 +80,17 @@ Section: ipv6, ipv9
 Explanation:
 There is **NO** explanation here ...!
 
+# Numbered answer list
+
+If 42 is the answer, what was the question?
+
+1. The meaning of life.
+2. Origin of extraterrestials
+3. How many lightyears to the closest inhabitable solar system
+4. How many politicians does it take to make a decision?
+
+answer: 1
+explanation: read the hitchiker's guide to the galaxy.
+section: sf
+tags: fun
 

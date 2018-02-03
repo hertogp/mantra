@@ -12,6 +12,7 @@ import app_tests
 import app_review
 import app_upload
 import app_settings
+import app_compile
 
 # pylint: disable=block-comment-should-start-with-#, E265
 
@@ -23,6 +24,7 @@ PAGES = {
     app_review.path: app_review,
     app_upload.path: app_upload,
     app_settings.path: app_settings,
+    app_compile.path: app_compile,
 }
 
 STYLES = {
@@ -52,7 +54,7 @@ STYLESHEETS = [
 app.layout = html.Div([
     # HEADER, same across all pages
     html.Div([
-        dcc.Location(id='app-url'),
+        dcc.Location(id='app-url', refresh=False),
         html.Div(STYLESHEETS),
         html.I(className='fab fa-themeisle fa-2x', style=STYLES['header-fa']),
         html.Pre('  ', style=STYLES['header-spacer']),
@@ -91,24 +93,36 @@ app.layout = html.Div([
 ])
 
 
-# -- dropdown menu
+# -- Page Navigation
 @app.callback(
     dd.Output('app-page', 'children'),
     [dd.Input('app-url', 'pathname')],
     [dd.State('app-cache', 'children')])
 def goto_page(pathname, app_cache):
-    # cache is list of Div.props
-    page_id = 'app-cache-{}'.format(pathname)
-    page_cache = {}
+    print('goto_page', pathname)
+    page_cache = []
+    # set appropiate page_id as index into PAGES
+
+    pathname = pathname if pathname else '/'
+    if pathname.startswith('/_mantra/'):
+        page_id = '/'.join(pathname.split('/')[0:3])
+    else:
+        page_id = pathname
+    cache_id = 'app-cache-{}'.format(page_id)
+
     all_caches = [x['props'] for x in app_cache]
     for cache in all_caches:
-        if cache['id'] == page_id:
+        print('cache', cache)
+        if cache['id'] == cache_id:
             kids = cache['children']  # might be None
+            print('--> page_cache', cache_id, '=', kids)
             if kids and len(kids) > 0:
                 page_cache = json.loads(kids)
+                print('page_cache', page_cache)
 
-    page = PAGES.get(pathname, None)
+    page = PAGES.get(page_id, None)
     if page is None:
+        print('page mis', page_id, 'not found in', PAGES.keys())
         return html.Div('404 - {!r} - not found'.format(pathname))
     return page.layout(page_cache)
 

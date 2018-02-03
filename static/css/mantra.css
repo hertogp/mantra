@@ -85,3 +85,16 @@ h4 {
     padding-right: 3px;
 }
 
+
+/* No_op links:
+ * Source = ROOT/docs/categor../test.md
+ * Dest = ROOT/.mantra/<unique>/q01.json ...
+ * no_op is where Source is not yet compiled to Dest
+ * in the tests_table
+ *  -> test link is disabled,
+ *  -> action button should be compile
+ */
+a.no_op, a.no_op:hover {
+    pointer-events: none;
+    color: #e1e1e1;
+}

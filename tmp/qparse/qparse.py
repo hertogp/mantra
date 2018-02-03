@@ -270,6 +270,7 @@ class PandocAst(object):
         'turn AST into output format'
         in_fmt = 'json'
         out_fmt = out_fmt or self.FMT
+        xtra = xtra or self.MD_XTRA
         json_str = json.dumps([self.meta, self.ast])
         return pp.convert_text(json_str, out_fmt, in_fmt, extra_args=xtra)
 
@@ -369,17 +370,18 @@ class Parser(object):
             if attr not in self.ATTR_KEYWORDS:
                 continue
             if attr == 'explanation:':
-                attrs[attr] = PandocAst(ast=as_ast('Para',
-                                                  subast)).convert('markdown')
+                xpl = PandocAst(ast=as_ast('Para', subast)).convert('markdown')
+                attrs[attr] = xpl.strip()
+
             elif attr == 'tags:':
                 # list of words, possibly separated by spaces and/or comma's
                 words = pf.stringify(subast).replace(',', ' ').lower()
                 attrs[attr] = sorted(set(words.split()))
 
             elif attr == 'answer:':
-                # list of letters, possible separated by spaces or comma's
+                # list of letters or numbers, possibly separated
                 answers = pf.stringify(subast).lower()
-                attrs[attr] = sorted(set(x for x in answers if x.isalpha()))
+                attrs[attr] = sorted(set(x for x in answers if x.isalnum()))
 
             elif attr == 'section:':
                 words = pf.stringify(subast).replace(',', ' ').lower()
@@ -407,6 +409,7 @@ class Parser(object):
         # Header -> [level, [slug, [(key,val),..]], [header-blocks]]
         qstn.level = val[0]
         qstn.title = PandocAst(ast=as_ast(key, val)).convert('markdown')
+        qstn.title = qstn.title.strip()
 
     def _para(self, key, val, qstn):
         # Para -> [Block], might be an <attribute:>-para
@@ -426,7 +429,7 @@ class Parser(object):
         'An OrderedList is a multiple-choice (or multiple-correct) element'
         # OrderedList -> ListAttributes [[Block]]
         # - ListAttributes = (Int, ListNumberStyle, ListNumberDelim)
-        # - the first OrderedList is the choices-list for the question
+        # - only the first OrderedList is the choices-list for the question
         if len(qstn.choices) > 0:
             qstn.ast.append(as_block(key, val))
         else:
@@ -448,66 +451,52 @@ class Parser(object):
         print(qid, qclass, att)
 
 
-class Question(object):
-    'Represent a single question'
-    TYPES = {0: 'only-ok',           # only ok button
-             1: 'multiple-choice',   # radio buttons
-             2: 'multiple-correct',  # check boxes
-             3: 'yes-no',            # Yes/No buttons
-             4: 'flip-over',         # flip button
-             5: 're-order',          # re-order across 2 lists
-             6: 'fill-in',           # text-input
-             7: 'drop-down',         # select 1 answer
-             8: 'mixed'}             # select 1 answer
-
-    def __init__(self):
-        self.qtype = 0
-        self.title = ''    # markdown text
-        self.text = ''     # markdown text
-        self.choices = []  # list of possible answers (markdown)
-        self.correct = []  # list of idx's of correct answers
-        self.explain = ''  # markdown text
-        self.section = ''  # string
-        self.tags = []     # list of stings
-        self.ast = None    # pandoc ast of question
-
-
 class Quiz(object):
     'Represent a quiz with 0 or more questions'
+    # this class ties PandocAst and Parser together
     def __init__(self, filename):
-        p = Parser().parse(source=filename)
-        self.filename = filename
-        self.meta = p.meta
-        self.tags = p.tags
-        self.questions = p.qstn
-
-    def __call__(self, qid):
-        'return a question form and string template'
         try:
-            qstn = self.questions[qid]
-        except IndexError:
-            raise QError('Quiz: question index out of range')
+            p = Parser().parse(ast=PandocAst(source=filename))
+            self.filename = filename
+            self.meta = p.meta
+            self.tags = p.tags
+            self.questions = p.qstn
+        except Exception as e:
+            raise QError('Error parsing markdown file: {}'.format(e))
 
-        return qstn  # the question
+    def __iter__(self):
+        return iter(self.questions)
+
+    def get_qid(self, qid):
+        'get questions by index into list of questions'
+        try:
+            return self.questions[qid]
+        except IndexError:
+            raise QError('invalid question index')
+
 
 if __name__ == '__main__':
     print('qparse is alive, once again!')
-    ast = PandocAst(sys.argv[1])
-    # import pprint
-    # for token in ast:
-    #     print(token.type)
-    #     pprint.pprint(token.value, indent=4)
-
-    qz = Parser().parse(ast=ast)
+    qz = Quiz(sys.argv[1])
     print('quiz.meta', qz.meta)
     print('quiz.tags', qz.tags)
     print()
-    for q in qz.qstn:
+    for q in qz:
         print('-'*80)
         print(q.title)
-        print('- tags', q.tags)
-        print('- text', q.text)
-        print('- choices', q.choices)
-        print('- answer', q.answer)
-        print('- explaination', q.explain)
-        print('- markdown\n', q.markdown)
+        print(q.text)
+        print('\n'.join(['{}. {}'.format(*kv) for kv in q.choices]))
+        print()
+        print('  ----------')
+        print('  answer:', q.answer)
+        print('  tags  :', ','.join(q.tags))
+        print('  why   :', q.explain)
+
+    print('='*80)
+    for n in range(100):
+        try:
+            q = qz.get_qid(n)
+            print(n, q.title)
+        except QError:
+            break
+    print('all done')

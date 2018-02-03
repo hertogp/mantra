@@ -1,5 +1,4 @@
 # -*- encoding: utf-8 -*-
-import os
 import pathlib
 import utils
 
@@ -8,6 +7,7 @@ CONFIG = {
     'root': '/home/dta/mantra',
     'static': 'static',
     'tests': 'docs',
+    'quizdir': '_mantra',
 
     # test file suffixes
     'test-types': ['md', 'pd', 'markdown'],
