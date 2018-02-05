@@ -39,8 +39,8 @@ def get_tests():
             continue
 
         # hash filename with dirname as salt -> unique dirname
-        quizdir = hashfnv64(filename, dirname)
-        statsfile = os.path.join(dst_root, quizdir, 'stats.csv')
+        test_id = hashfnv64(filename, dirname)
+        statsfile = os.path.join(dst_root, test_id, 'stats.csv')
         available = os.path.isfile(statsfile)
         score, action = 0, 'run'
         if available:
@@ -64,7 +64,7 @@ def get_tests():
         rv.append({'category': category,
                    'filename': filename,
                    'filepath': fpath,
-                   'quizdir': quizdir,
+                   'test_id': test_id,
                    'created': ctime,
                    'available': available,
                    'score': score,
@@ -104,16 +104,17 @@ def test_table(tests, categories):
         rowTitle = test['action']
         # action = [run, compile, recompile]
         action = dcc.Link(
-            html.I(className=awesome_action.get(test['action'], default_action)),
+            html.I(className=awesome_action.get(test['action'],
+                                                default_action)),
             href='/{}/{}/{}'.format(CONFIG['quizdir'],
                                     test['action'],
-                                    test['quizdir']),
+                                    test['test_id']),
             className='btn-awesome',
             )
 
         row = html.Tr([
             html.Td(test['category']),
-            html.Td(html.A(href=test['quizdir'],
+            html.Td(html.A(href=test['test_id'],
                            children=test['filename'],
                            className=linkClassName,
                            )),
@@ -125,7 +126,6 @@ def test_table(tests, categories):
     return html.Table(rows)
 
 
-
 def test_options(tests, cats):
     rv = []
     cats = [] if cats is None else cats
@@ -135,7 +135,7 @@ def test_options(tests, cats):
         if test['category'].lower() in cats:
             rv.append(
                 {'label': test['filename'],
-                 'value': test['quizdir']
+                 'value': test['test_id']
                  })
     return rv
 
@@ -146,11 +146,11 @@ def category_options(tests):
         rv.append({'label': cat, 'value': cat})
     return rv
 
-#-- PAGE
+# - PAGE
 path = '/tests'
 
 
-def layout(cached):
+def layout(app_nav, cached):
     # fill static layout with cached settings, if any
     print('app-tests, cached', cached)
     if cached is None:
@@ -296,8 +296,7 @@ _layout = html.Div(
      dd.Input('tests-limit-time', 'values'),
      dd.Input('tests-max-time', 'value'),
      ])
-def cache_page(cats, mode, maxq, options,
-               limit_maxq, limit_time, max_time):
+def cache(cats, mode, maxq, options, limit_maxq, limit_time, max_time):
     'store page state in cache and controls for revisits'
     return json.dumps(
         [('tests-category', 'value', cats),
@@ -314,8 +313,10 @@ def cache_page(cats, mode, maxq, options,
 @app.callback(
     dd.Output('tests-display', 'children'),
     [dd.Input('app-cache-/tests', 'children')])
-def display_cache(cached):
+def display(cached):
     cached = json.loads(cached)
+    print('tests display')
+    print('   <--reads--', cached)
     cats = []
     for id_, attr, val in cached:
         if id_ == 'tests-category':

@@ -8,7 +8,6 @@ from config import CONFIG
 app = dash.Dash('__MANTRA__')
 app.config['suppress_callback_exceptions'] = True
 app.title = 'Mantra'
-# app.css.config.serve_locally = True
 
 
 @app.server.route('/static/<path:path>')

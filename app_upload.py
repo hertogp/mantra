@@ -3,13 +3,12 @@ Mantra - upload page
 '''
 
 import dash_html_components as html
-import dash.dependencies as dd
 
 from app import app
 
 path = '/upload'
 
-def layout(cached):
+def layout(app_nav, cached):
     return _layout
 
 _layout = html.Div([

@@ -9,7 +9,7 @@ from app import app
 
 path = '/review'
 
-def layout(cached):
+def layout(app_nav, cached):
     return _layout
 
 _layout = html.Div([

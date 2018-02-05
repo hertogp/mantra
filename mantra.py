@@ -44,6 +44,13 @@ STYLES = {
     'header-cache': {
         'display': 'none'
     },
+    'header-banner': {
+        'border-width': '0px 0px 1px 0px',
+        'border-style': 'solid',
+        'border-color': 'lightgrey',
+        'margin-bottom': '15px',
+        'padding-bottom': '0px',
+    }
 
 }
 
@@ -74,7 +81,9 @@ app.layout = html.Div([
                          ]
                      ),
                  ]),
-
+        # store current pathname + derived variables for all pages
+        html.Div(id='app-nav', style=STYLES['header-cache']),
+        # create page specific caches for controls amongst others
         html.Div(
             id='app-cache',
             style=STYLES['header-cache'],
@@ -83,8 +92,9 @@ app.layout = html.Div([
                     page.path)) for page in set(PAGES.values())
             ]),
 
-    ], className='row'),
-    html.Hr(),
+    ],
+             style=STYLES['header-banner'],
+             className='row'),
 
     # BODY
     html.Div(
@@ -95,45 +105,67 @@ app.layout = html.Div([
 
 # -- Page Navigation
 @app.callback(
-    dd.Output('app-page', 'children'),
-    [dd.Input('app-url', 'pathname')],
-    [dd.State('app-cache', 'children')])
-def goto_page(pathname, app_cache):
-    print('goto_page', pathname)
-    page_cache = []
-    # set appropiate page_id as index into PAGES
-
+    dd.Output('app-nav', 'children'),
+    [dd.Input('app-url', 'pathname')])
+def app_nav(pathname):
+    'set pathname, page_id, cache_id & test_id based on pathname'
     pathname = pathname if pathname else '/'
-    if pathname.startswith('/_mantra/'):
-        page_id = '/'.join(pathname.split('/')[0:3])
+
+    if pathname.startswith('/{}/'.format(CONFIG['quizdir'])):
+        parts = pathname.split('/')
+        page_id = '/'.join(parts[0:3])
+        test_id = parts[-1]
     else:
         page_id = pathname
+        test_id = ''
+
     cache_id = 'app-cache-{}'.format(page_id)
+    app_nav = {
+        'pathname': pathname,
+        'test_id': test_id,
+        'cache_id': cache_id,
+        'page_id': page_id
+    }
+    print('app-nav', app_nav)
+    return json.dumps(app_nav)
+
+
+@app.callback(
+    dd.Output('app-page', 'children'),
+    [dd.Input('app-nav', 'children')],
+    [dd.State('app-cache', 'children')])
+def goto_page(app_nav, app_cache):
+    app_nav = json.loads(app_nav)
+    pathname = app_nav.get('pathname', '/')
+    page_id = app_nav.get('page_id', '/')
+    cache_id = app_nav.get('cache_id', '')
+    print('goto_page', pathname)
 
     all_caches = [x['props'] for x in app_cache]
+    page_cache = None
     for cache in all_caches:
-        print('cache', cache)
         if cache['id'] == cache_id:
-            kids = cache['children']  # might be None
-            print('--> page_cache', cache_id, '=', kids)
+            kids = cache.get('children', None)
             if kids and len(kids) > 0:
                 page_cache = json.loads(kids)
-                print('page_cache', page_cache)
+                print('cache_id', cache_id, page_cache)
 
     page = PAGES.get(page_id, None)
     if page is None:
-        print('page mis', page_id, 'not found in', PAGES.keys())
         return html.Div('404 - {!r} - not found'.format(pathname))
-    return page.layout(page_cache)
+    return page.layout(app_nav, page_cache)
 
 
 @app.callback(
     dd.Output('app-menu-content', 'children'),
     [dd.Input('app-menu-content', 'n_clicks'),
-     dd.Input('app-url', 'pathname')],
+     dd.Input('app-nav', 'children')],
     [dd.State('app-menu-content', 'children')])
-def set_active_link(clicks, pathname, menu_items):
-    pathname = '/' if pathname is None else pathname
+def set_active_link(clicks, app_nav, menu_items):
+    app_nav = json.loads(app_nav)
+    pathname = app_nav.get('pathname', '/')
+    print('set_active_link', pathname)
+    # pathname = '/' if pathname is None else pathname
     page = PAGES.get(pathname, None)
     page_path = '' if page is None else page.path
     for item in menu_items:
