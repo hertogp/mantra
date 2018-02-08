@@ -6,8 +6,8 @@ CONFIG = {
     # directories
     'root': '/home/dta/mantra',
     'static': 'static',
-    'tests': 'docs',
-    'quizdir': '_mantra',
+    'src_dir': 'docs',
+    'dst_dir': '_mantra',
 
     # test file suffixes
     'test-types': ['md', 'pd', 'markdown'],
@@ -38,7 +38,8 @@ CONFIG.update(update)
 try:
     CONFIG['root'] = pathlib.Path(CONFIG['root']).expanduser().resolve().absolute()
     CONFIG['static'] = str((CONFIG['root'] / CONFIG['static']).resolve())
-    CONFIG['tests'] = str((CONFIG['root'] / CONFIG['tests']).resolve())
+    CONFIG['src_dir'] = str((CONFIG['root'] / CONFIG['src_dir']).resolve())
+    CONFIG['dst_dir'] = str((CONFIG['root'] / CONFIG['dst_dir']).resolve())
     CONFIG['root'] = str(CONFIG['root'])
 
 except Exception as e:

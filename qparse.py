@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# -*- encoding: utf8 -*-
 import sys
 import urllib.request
 import json
@@ -9,17 +9,9 @@ from itertools import chain
 from io import StringIO
 
 
-# Notes:
-# - ROOT/docs/<category>/<filename>.{zip, md}  = test w or w/o img's
-# - ROOT/static/qn/<hash_id>/q01.md? + images
-# -or-
-# - ROOT/docs/<category>/<subcat>/../<filename>.md + imgs
-#   hash_id = hash(category/subcat/../filename.md)
-# - ROOT/static/qz/<hash_id>/filename.md + q<n>.md + img<n>.png
 # pylint disable: E265
 
-#-- helpers nopep8
-
+# - helpers nopep8
 
 def as_block(key, value):
     'return (key,value)-combination as a block element'
@@ -454,7 +446,7 @@ class Parser(object):
 class Quiz(object):
     'Represent a quiz with 0 or more questions'
     # this class ties PandocAst and Parser together
-    def __init__(self, filename):
+    def __init__(self, filename, dstdir=None):
         try:
             p = Parser().parse(ast=PandocAst(source=filename))
             self.filename = filename
@@ -475,28 +467,27 @@ class Quiz(object):
             raise QError('invalid question index')
 
 
-if __name__ == '__main__':
-    print('qparse is alive, once again!')
-    qz = Quiz(sys.argv[1])
-    print('quiz.meta', qz.meta)
-    print('quiz.tags', qz.tags)
-    print()
-    for q in qz:
-        print('-'*80)
-        print(q.title)
-        print(q.text)
-        print('\n'.join(['{}. {}'.format(*kv) for kv in q.choices]))
-        print()
-        print('  ----------')
-        print('  answer:', q.answer)
-        print('  tags  :', ','.join(q.tags))
-        print('  why   :', q.explain)
+    # print('qparse is alive, once again!')
+    # qz = Quiz(sys.argv[1])
+    # print('quiz.meta', qz.meta)
+    # print('quiz.tags', qz.tags)
+    # print()
+    # for q in qz:
+    #     print('-'*80)
+    #     print(q.title)
+    #     print(q.text)
+    #     print('\n'.join(['{}. {}'.format(*kv) for kv in q.choices]))
+    #     print()
+    #     print('  ----------')
+    #     print('  answer:', q.answer)
+    #     print('  tags  :', ','.join(q.tags))
+    #     print('  why   :', q.explain)
 
-    print('='*80)
-    for n in range(100):
-        try:
-            q = qz.get_qid(n)
-            print(n, q.title)
-        except QError:
-            break
-    print('all done')
+    # print('='*80)
+    # for n in range(100):
+    #     try:
+    #         q = qz.get_qid(n)
+    #         print(n, q.title)
+    #     except QError:
+    #         break
+    # print('all done')

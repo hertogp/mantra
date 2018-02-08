@@ -14,9 +14,24 @@ import app_upload
 import app_settings
 import app_compile
 
+# - Module logger
+log = app.getlogger(__name__)
+log.debug('logger enabled')
+
+
+# - Helpers
+def urlparams(fragment):
+    'create dict from params in fragments like {?,#}p1=v1&p2=v2&...'
+    # ignore parts without an '=' in them
+    if fragment is None or len(fragment) < 4:
+        return {}
+    parts = [x.split('=') for x in fragment[1:].split('&')]
+    # ignore fragments that are not param=value
+    return dict(x for x in parts if len(x) == 2)
+
 # pylint: disable=block-comment-should-start-with-#, E265
 
-#-- LAYOUT
+# -- LAYOUT
 
 PAGES = {
     '/': app_tests,
@@ -106,27 +121,24 @@ app.layout = html.Div([
 # -- Page Navigation
 @app.callback(
     dd.Output('app-nav', 'children'),
-    [dd.Input('app-url', 'pathname')])
-def app_nav(pathname):
+    [dd.Input('app-url', 'pathname'),
+     dd.Input('app-url', 'hash'),
+     dd.Input('app-url', 'search')])
+def app_nav(pathname, urlhash, urlsearch):
     'set pathname, page_id, cache_id & test_id based on pathname'
     pathname = pathname if pathname else '/'
+    log.debug('app_nav pathname %s', pathname)
+    log.debug('app_nav hash %s', urlhash)
+    log.debug('app_nav search %s', urlsearch)
 
-    if pathname.startswith('/{}/'.format(CONFIG['quizdir'])):
-        parts = pathname.split('/')
-        page_id = '/'.join(parts[0:3])
-        test_id = parts[-1]
-    else:
-        page_id = pathname
-        test_id = ''
-
-    cache_id = 'app-cache-{}'.format(page_id)
     app_nav = {
-        'pathname': pathname,
-        'test_id': test_id,
-        'cache_id': cache_id,
-        'page_id': page_id
+        'cache_id': 'app-cache-{}'.format(pathname),
+        'page_id': pathname,
+        'url': '{}{}{}'.format(pathname, urlsearch, urlhash),
+        'search': urlparams(urlsearch),
+        'hash': urlparams(urlhash),
     }
-    print('app-nav', app_nav)
+    log.debug('app-nav %s', app_nav)
     return json.dumps(app_nav)
 
 
@@ -136,23 +148,19 @@ def app_nav(pathname):
     [dd.State('app-cache', 'children')])
 def goto_page(app_nav, app_cache):
     app_nav = json.loads(app_nav)
-    pathname = app_nav.get('pathname', '/')
     page_id = app_nav.get('page_id', '/')
     cache_id = app_nav.get('cache_id', '')
-    print('goto_page', pathname)
+    log.debug('goto page %s', page_id)
 
-    all_caches = [x['props'] for x in app_cache]
-    page_cache = None
-    for cache in all_caches:
-        if cache['id'] == cache_id:
-            kids = cache.get('children', None)
-            if kids and len(kids) > 0:
-                page_cache = json.loads(kids)
-                print('cache_id', cache_id, page_cache)
+    cache = [x['props'] for x in app_cache if x['props']['id'] == cache_id]
+    cache = cache[0].get('children', None) if len(cache) else None
+    page_cache = json.loads(cache) if cache else None
+    log.debug('%s read cache %s', cache_id, page_cache)
 
     page = PAGES.get(page_id, None)
     if page is None:
-        return html.Div('404 - {!r} - not found'.format(pathname))
+        return html.Div('404 - {!r} - not found'.format(page_id))
+    log.debug('calling layout for page_id %s', page_id)
     return page.layout(app_nav, page_cache)
 
 
@@ -164,14 +172,14 @@ def goto_page(app_nav, app_cache):
 def set_active_link(clicks, app_nav, menu_items):
     app_nav = json.loads(app_nav)
     pathname = app_nav.get('pathname', '/')
-    print('set_active_link', pathname)
-    # pathname = '/' if pathname is None else pathname
+    log.debug('active link in menu is %s', pathname)
     page = PAGES.get(pathname, None)
     page_path = '' if page is None else page.path
     for item in menu_items:
         prop = item['props']
         href = prop.get('href', None)
         prop['className'] = 'active' if href == page_path else ''
+    log.debug('returning %s', len(menu_items))
     return menu_items
 
 

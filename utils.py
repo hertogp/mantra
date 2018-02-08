@@ -1,3 +1,4 @@
+# -*- encoding: utf8 -*-
 '''
 Utilities for Mantra.
 '''
@@ -11,8 +12,8 @@ import json
 from functools import wraps
 from inspect import ismethod, isfunction
 
-
 #-- dumpers
+
 
 class Jsonify(json.JSONEncoder):
     '''
@@ -145,6 +146,7 @@ def hashfnv64(text, salt=''):
 
 
 def find_files(topdirs, suffixes, recurse=True):
+    print('find_files %s, look at %s' % (topdirs, suffixes))
     if isinstance(topdirs, str):
         topdirs = [topdirs]
     if isinstance(suffixes, str):
@@ -152,8 +154,9 @@ def find_files(topdirs, suffixes, recurse=True):
 
     patterns = ['*.{}'.format(x) for x in suffixes]
     topdirs = [pathlib.Path(x).expanduser().resolve() for x in topdirs]
-
     for topdir in topdirs:
+        if not topdir.is_dir():
+            continue
         globdir = topdir.rglob if recurse else topdir.glob
         for pattern in patterns:
             for fname in globdir(pattern):
