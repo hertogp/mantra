@@ -15,11 +15,17 @@ import dash_core_components as dcc
 from app import app
 from config import CONFIG
 from utils import find_files, hashfnv64
+import utils
 
 # - Module logger
 log = app.getlogger(__name__)
 log.debug('logger created')
 
+# - PAGE globals
+path = '/tests'
+PATH = '/tests'
+CONTROLS = utils.get_domid('controls', PATH)
+DISPLAY = utils.get_domid('display', PATH)
 TESTS = []  # Global list of available tests
 
 
@@ -31,7 +37,7 @@ def get_tests():
     src_root = CONFIG['src_dir']                                   # tests.md's
     dst_root = CONFIG['dst_dir']   # compiled
     rv = []
-    for fpath in find_files(src_root, CONFIG['test-types']):
+    for fpath in find_files(src_root, CONFIG['test_types']):
         ctime = os.path.getctime(fpath)
         filename = os.path.basename(fpath)
         dirname = os.path.dirname(fpath)
@@ -124,7 +130,7 @@ def test_table(tests, categories):
         action = dcc.Link(
             html.I(className=awesome_action.get(test['action'],
                                                 default_action)),
-            href='/{}?test_id={}'.format(test['action'], test['test_id']),
+            href='/{};{}'.format(test['action'], test['test_id']),
             className='btn-awesome',
             )
 
@@ -164,16 +170,13 @@ def category_options(tests):
         rv.append({'label': cat, 'value': cat})
     return rv
 
-# - PAGE
-path = '/tests'
 
-
-def layout(app_nav, cached):
-    # fill static layout with cached settings, if any
-    print('app-tests, cached', cached)
-    if cached is None:
+def layout(app_nav, controls):
+    # fill static layout with controls settings, if any
+    print('app-tests, controls', controls)
+    if controls is None:
         return _layout
-    for ctl_id, attr, value in cached:
+    for ctl_id, attr, value in controls:
         setattr(_layout[ctl_id], attr, value)
     return _layout
 
@@ -295,25 +298,16 @@ _layout = html.Div(
 
                 html.Div(
                     className='eight columns',
-                    id='tests-display',
+                    id=DISPLAY,
                     children=['loading ...']
                 ),
 
 ])
 
-# can we list all cacheable controls via className e.g.?j
-# print(dir(_layout))
-# print(_layout.keys())
-# print('-'*80)
-# print(_layout.values())
-# for vistor in _layout.traverse():
-#     if hasattr(vistor, 'id'):
-#         print(type(vistor), vistor)
 
-# -- Page Cache
-# Cache = list of control attribute tuples (id, attr, value)
+# -- Page controls
 @app.callback(
-    dd.Output('app-cache-/tests', 'children'),
+    dd.Output(CONTROLS, 'children'),
     [dd.Input('tests-category', 'value'),
      dd.Input('tests-mode', 'value'),
      dd.Input('tests-max', 'value'),
@@ -337,14 +331,13 @@ def cache(cats, mode, maxq, options, limit_maxq, limit_time, max_time):
 
 # - display html table, trigger is page cache
 @app.callback(
-    dd.Output('tests-display', 'children'),
-    [dd.Input('app-cache-/tests', 'children')])
-def display(cached):
-    cached = json.loads(cached)
-    print('tests display')
-    print('   <--reads--', cached)
+    dd.Output(DISPLAY, 'children'),
+    [dd.Input(CONTROLS, 'children')])
+def display(controls):
+    log.debug('tests display %s', controls)
+    controls = json.loads(controls)
     cats = []
-    for id_, attr, val in cached:
+    for id_, attr, val in controls:
         if id_ == 'tests-category':
             cats = val
     return test_table(TESTS, cats)

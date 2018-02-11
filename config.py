@@ -1,6 +1,6 @@
 # -*- encoding: utf-8 -*-
 import pathlib
-import utils
+import yaml
 
 CONFIG = {
     # directories
@@ -10,7 +10,12 @@ CONFIG = {
     'dst_dir': '_mantra',
 
     # test file suffixes
-    'test-types': ['md', 'pd', 'markdown'],
+    'test_types': ['md', 'pd', 'markdown'],
+
+    # index of tests stored in json file located in dst_dir:
+    # - (re)created at startup
+    # - refreshable via gui
+    'index_tests': 'idx.json',
 
     # /static resources ...
     # favicon and logo
@@ -30,7 +35,21 @@ CONFIG = {
 
 }
 
-update = utils.load_config('mantra.yaml') or {}
+try:
+    path = pathlib.Path('mantra.yaml').expanduser().resolve()
+    if not path.exists() or not path.is_file():
+        update = {}
+    else:
+        print('path.name', path.name)
+        update = yaml.safe_load(open(path.name, 'rt')) or {}
+except FileNotFoundError:
+    update = {}
+except ValueError as e:
+    print('Error in yaml config')
+    print(repr(e))
+    raise SystemExit(1)
+
+# update = utils.load_config('mantra.yaml') or {}
 CONFIG.update(update)
 
 # create absolute full paths

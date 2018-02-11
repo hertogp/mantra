@@ -8,6 +8,7 @@ import dash.dependencies as dd
 from app import app
 
 path = '/review'
+PATH = '/review'
 
 def layout(app_nav, cached):
     return _layout

@@ -8,6 +8,8 @@ import dash.dependencies as dd
 from app import app
 
 path = '/settings'
+PATH = '/settings'
+
 
 def layout(app_nav, cached):
     return _layout

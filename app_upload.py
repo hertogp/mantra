@@ -7,6 +7,7 @@ import dash_html_components as html
 from app import app
 
 path = '/upload'
+PATH = '/upload'
 
 def layout(app_nav, cached):
     return _layout
