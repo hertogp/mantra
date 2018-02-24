@@ -1,17 +1,23 @@
 # -*- encoding: utf8 -*-
 import sys
+import os
 import urllib.request
 import json
 import pypandoc as pp
 import pandocfilters as pf
 from collections import namedtuple
 from itertools import chain
-from io import StringIO
+import io
+import logging
 
+from log import getlogger
+msgfmt = '%(asctime)s [%(name)s] %(funcName)s %(message)s'
+datefmt = '%H:%M:%S'
+FORMAT = logging.Formatter(fmt=msgfmt, datefmt=datefmt)
 
 # pylint disable: E265
-
 # - helpers nopep8
+
 
 def as_block(key, value):
     'return (key,value)-combination as a block element'
@@ -88,7 +94,7 @@ class OpenAnything(object):
         # simplified version from "dive into python"
         # already readable?
         if hasattr(self.source, 'read'):
-            self.reader = source
+            self.reader = self.source
             return self.reader
 
         # is it stdin?
@@ -112,7 +118,7 @@ class OpenAnything(object):
             pass
 
         # finally, treat source as a string & make it readable
-        self.reader = StringIO(str(self.source))
+        self.reader = io.StringIO(str(self.source))
         return self.reader
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -217,8 +223,10 @@ class PandocAst(object):
         ]
     FMT = 'markdown'
 
-    def __init__(self, source=None, ast=None, fmt=None, opts=None, xtra=None):
+    def __init__(self, log=None, source=None, ast=None, fmt=None, opts=None,
+                 xtra=None):
         'create META,AST from source or use ast if source is None'
+        self.log = log if log else getlogger(__name__)
         self.xtra = xtra or self.MD_XTRA
         self.opts = opts or self.MD_OPTS
         self.fmt = '+'.join(chain([fmt or self.FMT], opts or self.MD_OPTS))
@@ -226,7 +234,7 @@ class PandocAst(object):
 
         self.source = source    # if given, will override any ast provided
         self.ast = ast          # supply this to iterate across subset ast
-
+        self.log.debug(source)
         if source is not None:  # source overrides any given ast
             with OpenAnything(source) as f:
                 try:
@@ -268,16 +276,19 @@ class PandocAst(object):
 
 
 class Parser(object):
-    'Parse a PandocAst into a Quiz with 0 or more questions'
+    'Parse a PandocAst into a list of 0 or more questions'
     # an Attribute Para starts with one of these:
     ATTR_KEYWORDS = ['tags:', 'answer:', 'explanation:', 'section:']
 
-    def __init__(self, in_fmt=None, opts=None):
+    def __init__(self, log=None, in_fmt=None, opts=None):
+        self.log = log if log else getlogger(__name__)
         self.fmt = in_fmt
         self.opts = opts
         self.meta = {u'unMeta': {}}
         self.tags = [[]]  # list of tag-list per header level (=idx)
         self.qstn = []    # the list of Question instances
+        self.log.debug('in_fmt  %s:', in_fmt)
+        self.log.debug('options %s:', opts)
 
     def parse(self, ast):
         'parse ast and return a quiz object w/ 0 or more questions'
@@ -444,50 +455,47 @@ class Parser(object):
 
 
 class Quiz(object):
-    'Represent a quiz with 0 or more questions'
+    '''
+    Compile a srfile (fullpath) to a quiz with 1 or more questions.
+    Log messages to logfile (relative to dstdir)
+    '''
     # this class ties PandocAst and Parser together
-    def __init__(self, filename, dstdir=None):
+    def __init__(self, srcfile, dst_dir):
         try:
-            p = Parser().parse(ast=PandocAst(source=filename))
-            self.filename = filename
+            kwargs = {'funcName': 'quiz.init'}
+            self.dst_dir = dst_dir
+            self.srcfile = srcfile
+            self.test_id = os.path.basename(dst_dir)
+            self.logfile = os.path.join(dst_dir, 'mtr.log')
+
+            # setup handler to log to specific file
+            self.log = getlogger(self.test_id)
+            self.log.propagate = False               # qparse logs stop here
+            self.log.setLevel(logging.DEBUG)
+            self._handler = logging.FileHandler(self.logfile)
+            self._handler.setFormatter(FORMAT)
+            self.log.addHandler(self._handler)
+
+            p = Parser(self.log)
+            ast = PandocAst(self.log, source=srcfile)
+            p.parse(ast)
             self.meta = p.meta
             self.tags = p.tags
             self.questions = p.qstn
+            self.log.debug('Found %s questions', len(p.qstn), kwargs=kwargs)
+
         except Exception as e:
+            self.log.debug('Error parsing markdown file: %s', srcfile)
             raise QError('Error parsing markdown file: {}'.format(e))
 
+    def __del__(self):
+        'instance bucketlist'
+        import shutil
+        import time
+        time.sleep(1)  # give logfile a chance to appear
+        shutil.copyfile(self.logfile, self.logfile + '.delme')
+        os.remove(self.logfile)
+
     def __iter__(self):
+        'iterate across available questions in a Quiz instance'
         return iter(self.questions)
-
-    def get_qid(self, qid):
-        'get questions by index into list of questions'
-        try:
-            return self.questions[qid]
-        except IndexError:
-            raise QError('invalid question index')
-
-
-    # print('qparse is alive, once again!')
-    # qz = Quiz(sys.argv[1])
-    # print('quiz.meta', qz.meta)
-    # print('quiz.tags', qz.tags)
-    # print()
-    # for q in qz:
-    #     print('-'*80)
-    #     print(q.title)
-    #     print(q.text)
-    #     print('\n'.join(['{}. {}'.format(*kv) for kv in q.choices]))
-    #     print()
-    #     print('  ----------')
-    #     print('  answer:', q.answer)
-    #     print('  tags  :', ','.join(q.tags))
-    #     print('  why   :', q.explain)
-
-    # print('='*80)
-    # for n in range(100):
-    #     try:
-    #         q = qz.get_qid(n)
-    #         print(n, q.title)
-    #     except QError:
-    #         break
-    # print('all done')

@@ -6,10 +6,9 @@ import dash_html_components as html
 
 from app import app
 
-path = '/upload'
 PATH = '/upload'
 
-def layout(app_nav, cached):
+def layout(nav, controls):
     return _layout
 
 _layout = html.Div([

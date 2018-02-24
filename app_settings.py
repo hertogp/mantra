@@ -7,11 +7,10 @@ import dash.dependencies as dd
 
 from app import app
 
-path = '/settings'
 PATH = '/settings'
 
 
-def layout(app_nav, cached):
+def layout(nav, controls):
     return _layout
 
 _layout = html.Div([

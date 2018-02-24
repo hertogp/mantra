@@ -11,9 +11,9 @@ import dash_html_components as html
 import dash_core_components as dcc
 import dash.dependencies as dd
 
+from log import getlogger
 from app import app
-from app_tests import TESTS
-from config import CONFIG
+from config import cfg
 from qparse import Quiz
 import utils
 
@@ -26,86 +26,68 @@ PROGRESS = '{}-progress'.format(DISPLAY)
 TIMER = '{}-timer'.format(DISPLAY)
 
 # - Module logger
-log = app.getlogger(__name__)
+log = getlogger(__name__)
 log.debug('logger created')
 
 # - Module functionality
 
-# use a logger to dump progress info to test_dir/compile.log
+# use a logger to dump progress info to test_dir/mtr.log
 # use an interval to dump its contents to display until done
 # then show results ala app_tests with action to play the test
 # and use threading to separate out the compiler process
 
-def compiler(app_nav):
+
+def compiler(nav):
     'worker func to compile test in separate thread'
-    test_id = app_nav.get('test_id', None)
-    log.debug('starting on %s' % test_id)
-    test_dir = os.path.join(CONFIG['dst_dir'], test_id)
-    if test_id is None:
+    if nav.test_id is None:
+        log.error('invalid test_id (None)')
         return False
-    os.makedirs(test_dir, exist_ok=True)
-    logfile = os.path.join(test_dir, 'compile.log')
-    lockfile = os.path.join(test_dir, '.lock')
-    src_test = {}
-    for test in TESTS:
-        if test['test_id'] == test_id:
-            src_test = test
-    src_file = test.get('filepath', None)
-    assert src_file is not None
 
-    # start a new logfile
-    with open(logfile, 'w') as fh:
-        fh.write('Compile target: %s\n' % test_id)
-        fh.write('Source:\n')
-        for k, v in src_test.items():
-            fh.write('- %-9s: %s\n' % (k, str(v)))
+    # get src details (MtrIdx tuple) to compile
+    master_idx = utils.mtr_idx_read()
+    idx = master_idx.get(nav.test_id, None)
+    if idx is None or len(idx) < 1:
+        log.error('no index entry for %s', nav.test_id)
+        return False
 
-    for i in range(5):
-        time.sleep(4)
-        with open(logfile, 'a') as fh:
-            fh.write('.%s' % i)
-            log.debug('working .. %s', i)
+    log.debug('starting on %s' % nav.test_id)
 
-    with open(logfile, 'a') as fh:
-        fh.write('\ndone!')
+    # get dest dir for compiler output
+    dst_dir = os.path.join(cfg.dst_dir, nav.test_id)
+    qz = Quiz(idx.src_file, dst_dir)
 
-    # signal termination of compile process
-    try:
-        with threading.Lock():
-            os.remove(lockfile)
-    except OSError:
-        pass
-    except Exception:
-        raise
-
+    # log any errors in qz to app log
+    # display qparse log results in case of errors
+    log.debug('%s tags: %s', nav.test_id, qz.tags)
+    log.debug('%s meta: %s', nav.test_id, qz.meta)
+    log.debug('%s qstn: %s', nav.test_id, len(qz.questions))
 
     return True
 
 
 # - Page Layout
 _layout = html.Div([
-    dcc.Interval(interval=500, id=TIMER, n_intervals=0),
+    dcc.Interval(interval=250, id=TIMER, n_intervals=0),
     html.Div(id=DISPLAY),
     html.Div(id=PROGRESS),
 ])
 
 
-def layout(app_nav, controls):
+def layout(nav, controls):
     'update controls to cached settings and return layout'
-    log.debug('app_nav %s', app_nav)
-    log.debug('cached %s', controls)
-    return utils.set_layout_controls(_layout, controls)
+    log.debug('nav %s', nav)
+    log.debug('controls %s', controls)
+    return utils.set_controls(_layout, controls)
 
 
-# - Page Cache
+# - Controls Cacheing
 @app.callback(
     dd.Output(CONTROLS, 'children'),
     [dd.Input('app-nav', 'children')],
     [dd.State(CONTROLS, 'children')])
-def controls(app_nav, controls):
+def controls(nav, controls):
     controls = json.loads(controls) if controls else []
-    app_nav = json.loads(app_nav)
-    log.debug('restore controls: %s', controls)
+    log.debug('save controls: %s', controls)
     return json.dumps(controls)
 
 
@@ -115,12 +97,11 @@ def controls(app_nav, controls):
     [dd.Input('app-nav', 'children'),
      dd.Input(CONTROLS, 'children')],
     [dd.State(DISPLAY, 'children')])
-def display(app_nav, controls, display):
-    app_nav = json.loads(app_nav)
+def display(nav, controls, display):
+    nav = utils.UrlNav(*json.loads(nav))
     controls = json.loads(controls) if controls else []
-    log.debug('app-nav %s', app_nav['href'])
+    log.debug('nav %s', nav.href)
     log.debug('display %s', display)
-
     return ''
 
 
@@ -129,26 +110,26 @@ def display(app_nav, controls, display):
     dd.Output(TIMER, 'interval'),
     [dd.Input(TIMER, 'n_intervals')],
     [dd.State('app-nav', 'children')])
-def terminate(n_intervals, app_nav):
-    OFF = str(24*60*60*1000)  # once per day
-    ON = str(1*1000)
-    log.debug('n_intervals %s', n_intervals)
-    app_nav = json.loads(app_nav)
-    log.debug('app_nav', app_nav)
-    test_id = app_nav.get('test_id', None)
+def terminate(n_intervals, nav):
+    OFF = '86400000'  # str(24*60*60*1000) update once per day
+    ON = '1000'  # str(1*1000) update every second
+    nav = utils.UrlNav(*json.loads(nav))
+    log.debug('interval %s for nav %s', n_intervals, nav)
 
-    if test_id is None:
+    # callbacks are in random order, so donot terminate unless
+    # we've had <n>-interval cycles...
+    if n_intervals < 2:
+        return ON
+
+    if nav.test_id is None:
         return OFF
 
-    test_dir = os.path.join(CONFIG['dst_dir'], test_id)
-    lockfile = os.path.join(test_dir, '.lock')
-    with threading.Lock():
-        if not os.path.isfile(lockfile):
-            log.debug('TERMINATE!')
-            return OFF
-        else:
-            with open(lockfile, 'r') as fh:
-                log.debug('locked %s', fh.read())
+    logfile = os.path.join(cfg.dst_dir, nav.test_id, 'mtr.log')
+    # with threading.Lock():
+    if not os.path.isfile(logfile):
+        log.debug('TERMINATE!')
+        return OFF
+
     return ON
 
 
@@ -157,39 +138,39 @@ def terminate(n_intervals, app_nav):
     [dd.Input(TIMER, 'n_intervals')],
     [dd.State('app-nav', 'children'),
      dd.State(PROGRESS, 'children')])
-def progress(intervals, app_nav, progress):
+def progress(intervals, nav, progress):
     'display compiler log file periodically'
-    app_nav = json.loads(app_nav)
+    nav = utils.UrlNav(*json.loads(nav))
     log.debug('interval=%s', intervals)
-    test_id = app_nav.get('test_id', None)
-    if test_id is None:
-        return html.Div('No Compile target: {}?'.format(test_id))
-    test_dir = os.path.join(CONFIG['dst_dir'], test_id)
-    logfile = os.path.join(test_dir, 'compile.log')
-    lockfile = os.path.join(test_dir, '.lock')
+    if nav.test_id is None:
+        return html.Div('No Compile target: {}?'.format(nav.test_id))
+    dst_dir = os.path.join(cfg.dst_dir, nav.test_id)
+    logfile = os.path.join(dst_dir, 'mtr.log')
 
     if intervals == 0:
         with threading.Lock():
-            if not os.path.isfile(lockfile):
-                t = threading.Thread(target=compiler, args=(app_nav,))
-                t.start()
-                with open(lockfile, 'w') as fh:
-                    fh.write('{} started '.format(t.name))
-                    fh.write(time.strftime('%Y%m%d %H:%M:%S',
+            if not os.path.isfile(logfile):
+                t = threading.Thread(target=compiler, args=(nav,))
+                os.makedirs(dst_dir, exist_ok=True)
+                with open(logfile, 'w') as fh:
+                    msg = '{} compiled by {}'.format(nav.test_id, t.name)
+                    fh.write(msg)
+                    fh.write(time.strftime(' %Y%m%d %H:%M:%S\n',
                                            time.localtime()))
-                log.debug('started thread %s for %s', t.name, test_id)
-                return html.Div('Started compiler {}'.format(t.name))
+                t.start()
+                log.debug(msg)
+                return html.Div(msg)
             else:
-                log.debug('joining running compile thread for %s', test_id)
+                log.debug('joining running compile thread for %s', nav.test_id)
                 return html.Div('Joining ...')
 
     # Display compiler results until done!
     if not os.path.isfile(logfile):
-        return html.Div('No compiler results ... (yet)')
-    rv = ['No news yet\n']
+        return html.Div(children=[
+            progress,
+            'link to play results if all went ok']
+                        )
     with open(logfile, 'r') as fh:
         rv = fh.readlines()
 
     return html.Div(html.Pre(''.join(rv)))
-
-

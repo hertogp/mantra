@@ -7,10 +7,9 @@ import dash.dependencies as dd
 
 from app import app
 
-path = '/review'
 PATH = '/review'
 
-def layout(app_nav, cached):
+def layout(nav, controls):
     return _layout
 
 _layout = html.Div([
