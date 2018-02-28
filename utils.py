@@ -17,7 +17,6 @@ from functools import wraps
 from inspect import ismethod, isfunction
 
 from log import getlogger
-import app
 from config import cfg
 
 
@@ -40,6 +39,7 @@ F_SRCERROR = 8  # src files not ok (eg src deleted or missing files)
 MtrIdx = namedtuple('MtrIdx', [
     'src_file',      # abspath to source file
     'src_hash',      # to see if it has changed
+    'dst_dir',      # where compiled version ends up
     'category',      # subdir(s) under src_root
     'test_id',       # original test_id
     'grade',         # the hash of (filename, category)
@@ -95,7 +95,7 @@ def timethis(func):
         start = time.perf_counter()
         r = func(*args, **kwargs)
         end = time.perf_counter()
-        print('{}.{} : {}'.format(func.__module__, func.__name__, end - start))
+        log.debug('%s.%s : %s', func.__module__, func.__name__, end - start)
         return r
     return wrapper
 
@@ -104,9 +104,9 @@ def trace(f):
     'trace calls to f'
     @wraps(f)
     def wrapper(*a, **kw):
-        print('trace: {}({},{})'.format(f.__name__, a, kw))
+        log.debug('trace: %s(%s,%s)', f.__name__, a, kw)
         rv = f(*a, **kw)
-        print(jsondump(rv))
+        log.debug(' %s', jsondump(rv))
         return rv
     return wrapper
 
@@ -127,20 +127,15 @@ class Proxy(object):
             if ismethod(attr) or isfunction(attr):
                 traced.append(name)
                 setattr(obj, name, trace(attr))
-        print('-'*45, 'Proxy:', repr(obj), 'tracing:')
-        for t in traced:
-            print(' -', t)
+        log.debug('tracing %s', repr(obj))
+        for name in traced:
+            log.debug(' - %s', name)
 
     # Delegate attribute lookup to internal obj
     def __getattr__(self, name):
         attr = getattr(self._obj, name)
-        print('-'*45, 'Proxy')
-        print('getattr:', name)
-        print(attr)
-        print('---')
-
+        log.debug('%s = %s', name, attr)
         return attr
-        # return getattr(self._obj, name)
 
     # Delegate attribute assignment
     def __setattr__(self, name, value):
@@ -316,9 +311,10 @@ def idx_by_src():
         if category == '.':
             continue  # skip files in cfg.src_dir itself
         test_id = src_test_id(src_file)
+        dst_dir = os.path.join(cfg.dst_dir, test_id)
         log.debug('add %s', test_id)
-        index[test_id] = MtrIdx(src_file, file_checksum(src_file), category,
-                                src_test_id(src_file), 0, 0, 0, 0)
+        index[test_id] = MtrIdx(src_file, file_checksum(src_file), dst_dir,
+                                category, src_test_id(src_file), 0, 0, 0, 0)
     return index
 
 
@@ -406,63 +402,3 @@ def mtr_idx_read():
 
 def idx_getstats(idx):
     pass
-
-
-def idx_getfiles():
-    'return dict {test_id} -> IdxEntry'
-    # skip files in src/dst_root dirs itself
-    # test_id = hash(reldir, basename.md) so when src_root dir
-    # is renamed, the test_id's remain the same
-    src_root = cfg.src_dir   # tests.md's
-    dst_root = cfg.dst_dir   # compiled
-    rv = {}                        # test_id -> IdxEntry
-
-    # collect index entries via src files
-    pats = ['*.{}'.format(ext) for ext in cfg.tst_ext]
-    for src_file in find_files(src_root, pats):
-        src_base = os.path.basename(src_file)
-        src_dir = os.path.dirname(src_file)
-        category = os.path.relpath(src_dir, src_root)
-        if category == '.':  # skip files in src_root itself
-            continue
-
-        test_id = hashfnv64(src_base, category)  # src_root relative hash
-        dst_dir = os.path.join(dst_root, test_id)
-
-        if rv.get(test_id, None):
-            log.debug('CLASHing test_id: %s hash:', test_id)
-            log.debug('- 1st cat/src: %s/%s',
-                      rv.get(test_id).get('category'),
-                      rv.get(test_id).get('src_basename'))
-            log.debug('- 2nd cat/src: %s/%s', category, src_base)
-            raise SystemExit(1)
-
-        log.debug('src %s -> %s', src_file, test_id)
-        rv[test_id] = {'src_file': src_file,
-                       'src_dir': src_dir,
-                       'src_base': src_base,
-                       'category': category,
-                       'dst_dir': dst_dir
-                       }
-
-    # collect index entries via existing dst files
-    for test_id in os.listdir(dst_root):
-        dst_dir = os.path.join(dst_root, test_id)
-        if not os.path.isdir(dst_dir):  # skip files in dst_root itself
-            continue
-
-        if rv.get(test_id, None):  # src already available
-            continue
-
-        log.debug('dst %s/%s is orphaned', dst_root, test_id)
-        rv[test_id] = {'src_file': '',
-                       'src_dir': None,
-                       'src_base': None,
-                       'category': None,
-                       'dst_dir': dst_dir,
-                       }
-    for k, v in rv.items():
-        log.debug('%s -> %s', k, v.get('src_file', 'n/a'))
-
-    return rv
-

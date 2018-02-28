@@ -17,6 +17,7 @@ from config import cfg
 from qparse import Quiz
 import utils
 
+
 # - PAGE globals
 #   ensure uniq names across all layouts
 PATH = '/compile'
@@ -53,14 +54,16 @@ def compiler(nav):
     log.debug('starting on %s' % nav.test_id)
 
     # get dest dir for compiler output
-    dst_dir = os.path.join(cfg.dst_dir, nav.test_id)
-    qz = Quiz(idx.src_file, dst_dir)
+    # - or put dst_root = cfg.dst_dir in idx?
+    qz = Quiz(idx, cfg)
 
     # log any errors in qz to app log
     # display qparse log results in case of errors
     log.debug('%s tags: %s', nav.test_id, qz.tags)
     log.debug('%s meta: %s', nav.test_id, qz.meta)
     log.debug('%s qstn: %s', nav.test_id, len(qz.questions))
+
+    del qz
 
     return True
 
