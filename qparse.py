@@ -1,6 +1,7 @@
 # -*- encoding: utf8 -*-
 import sys
 import os
+import copy
 import urllib.request
 import json
 import pypandoc as pp
@@ -91,12 +92,6 @@ Token = namedtuple('Token', ['type', 'value'])
 
 class QError(Exception):
     pass
-
-
-class Closure(object):
-    'simple container object'
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
 
 
 class OpenAnything(object):
@@ -288,159 +283,171 @@ class PandocAst(object):
         return pp.convert_text(json_str, out_fmt, 'json', extra_args=xtra)
 
 
+class Question(object):
+    'models a question'
+    TYPE_NRS = {
+        0: 'empty',     # initial, default value (for Question())
+        1: 'intro',     # front matter stuff after yaml & before 1st header
+        2: 'mchoice',   # multiple choice
+        3: 'mcorrect',  # multiple correct
+        9: 'unknown',   # not really a question
+    }
+    # map names to numbers as well
+    TYPES = dict((v, k) for k, v in TYPE_NRS.items())
+
+    _ATTR_DEFAULTS = {      # attrs for jsonfication
+        'level': 0,         # header level of this question
+        'type': 0,          # q's type_nr question
+        'tags': [],         # q's tags, incl. lowel level tags
+        'section': '',      # section keyword, if any
+        'title': '',        # q's title (in markdown), if any
+        'text': '',         # q's actual question in markdown
+        'choices': [],      # q's possible answers as [(val, label), ..] list
+        'answer': [],       # q's correct answer(s) as [val1, val2, ..]
+        'explain': '',      # Explanation of answer(s), in markdown
+        'markdown': ''      # Original markdown, incl. header starting the q
+    }
+
+    def __init__(self, **kwargs):
+        'Init new Question with supplied kw-args or defaults'
+        # use shallow copy.copy(default) since some attrs are lists.
+        # - if not, all q's would share the same _ATTR_DEFAULTS-lists
+        # - if using lists of lists -> deepcopy would be required!
+        for attr, default in self._ATTR_DEFAULTS.items():
+            setattr(self, attr, kwargs.get(attr, copy.copy(default)))
+
+    # alternate constructor
+    @classmethod
+    def load_json(cls, json_str):
+        'Create new Question from json_str, ignores unknown attrs'
+        try:
+            return cls(**json.loads(json_str))
+        except Exception as err:
+            TLS.log.error('cannot load json string\n%s', json_str)
+            raise QError('Error creating Question from a json string') from err
+
+    def to_json(self):
+        'dump to json string'
+        _DEF = self._ATTR_DEFAULTS
+        attrs = dict((attr, getattr(self, attr, _DEF[attr])) for attr in _DEF)
+        json_str = json.dumps(attrs, indent=3)
+        return json_str
+
+
 class Parser(object):
-    'Parse a PandocAst into a list of 0 or more questions'
+    'Parse a PandocAst into a list of 0 or more Questions'
     # an Attribute Para starts with one of these:
     ATTR_KEYWORDS = ['tags:', 'answer:', 'explanation:', 'section:']
 
-    def __init__(self, in_fmt=None, opts=None):
-        self.fmt = in_fmt
-        self.opts = opts
-        self.meta = {u'unMeta': {}}
-        self.tags = [[]]  # list of tag-list per header level (=idx)
-        self.qstn = []    # the list of Question instances
-        self.imgs = []    # list of (src.png,dst.png)
-        TLS.log.debug('fmt %s, opts %s', in_fmt, opts)
+    def __init__(self, doc_ast):
+        self.meta = {}    # doc's yaml meta data
+        self.tags = []    # document tags (from meta)
+        self.qstn = []    # list of individual Question's or front matter
+        self.imgs = []    # [(src_img, dst_img), ..] to be copied
 
-    def parse(self, ast):
-        'parse a PandocAst and build a list of 0 or more questions'
-        self.meta.update(ast.meta)                 # keep existing meta data
+        self._docmeta(doc_ast.meta)            # process meta data
+        for level, header in doc_ast.headers:
+            self._ast = []                     # ast for question being parsed
+            self.qstn.append(Question())       # new empty Question
+            ptr = self.qstn[-1]                # shorthand to new Question
+            TLS.log.debug('new Q: choices is %r', ptr.choices)
+            hdr = PandocAst(header)            # setup for iteration of tokens
+            ptr.markdown = hdr.convert()       # org markdown question text
 
-        # adopt any level-0 tags: defined in the YAML part (self.tags[0])
-        unmeta = self.meta.get(u'unMeta', {})
+            # extract parts of header sub-ast
+            for key, val in hdr.tokens:
+                if key == u'Header':
+                    self._header(key, val)
+                elif key == u'Para':
+                    self._para(key, val)
+                elif key == u'OrderedList':
+                    self._orderedlist(key, val)
+                else:
+                    self._ast.append(as_block(key, val))
+
+            # save remaining parts of sub-ast as actual question text
+            ptr.text = PandocAst(self._ast).convert('markdown')
+
+        self._inherit_tags()  # higher levels inherit lower level tags
+
+    def _docmeta(self, meta):
+        'update meta data and adopt any tags'
+        self.meta.update(meta)
+        unmeta = self.meta.setdefault(u'unMeta', {})
         for key, val in unmeta.items():
-            # hack: bare numbers in doc's yaml header are not wrapped in a
-            # 'MetaInlines'-block, i.e. val={'t': 'MetaString', 'c': 'digits'}
-            # -> which makes 'em disappear ...
+            # bare numbers in yaml header -> {'t': 'MetaString', 'c': 'digits'}
+            # not as 'MetaInlines'-blocks, pf.stringify makes 'em disappear?
             if val.get('t', None) != 'MetaInlines':
                 val = {'t': 'MetaInlines', 'c': [val]}
             unmeta[key] = pf.stringify(val)
             if key.lower() != 'tags':
                 continue
             tags = unmeta[key].lower().replace(',', ' ').split()
-            self.tags[0] = sorted(set(self.tags[0] + tags))
+            self.tags = sorted(set(tags))
+            TLS.log.debug('doc tags %r', self.tags)
 
-        # process front matter and subsequent headers as questions
-        for level, hdr in ast.headers:
-            if level == 0:
-                self._front_matter(hdr)
-            else:
-                self.qstn.append(self.question(hdr))
-
-        # questions also inherit document tags
-        for q in self.qstn:
-            q.tags.extend(self.tags[0])
-        return self
-
-    def question(self, ast):
-        'turn a header-ast into a single question, if possible'
-        qstn = Closure(level=0,       # header level of this question
-                       tags=[],       # qstn's tags (inherits self.TAGS)
-                       section='',    # section keyword
-                       title=[],      # q's title
-                       text=[],       # q's text in markdown
-                       choices=[],    # q's possible answers (ordered list)
-                       answer=[],     # q's correct answer(s) (list of letters)
-                       explain=[],    # explanation of the answer
-                       imgs=[],       # list of (src.png, dst.png)
-                       ast=[],        # qstn's original ast
-                       markdown='')   # qstn's orginal markdown
-
-        ast = PandocAst(ast)
-        qstn.markdown = ast.convert()
-
-        # process chunks in header-ast
-        for key, val in ast.tokens:
-            if key == u'Header':
-                self._header(key, val, qstn)
-            elif key == u'Para':
-                self._para(key, val, qstn)
-            elif key == u'OrderedList':
-                self._orderedlist(key, val, qstn)
-            else:
-                qstn.ast.append(as_block(key, val))
-
-        qstn.text = PandocAst(qstn.ast).convert('markdown')
-        # a question inherits lower level tags
-        level = qstn.level
-        for q in reversed(self.qstn):
-            if level < 1:
-                break
-            if q.level < level:
-                qstn.tags.extend(q.tags)
-                level -= 1
-        return qstn
-
-    def _front_matter(self, ast):
-        'pickup any tags in front matter before 1st header'
-        # only pick up any additional tags, ignore the rest
-        TLS.log.debug('processing front matter')
-        for _token in PandocAst(ast).tokens:
-            if _token.type != u'Para':
-                continue
-            if _token.value[0]['t'] != u'Str':
-                continue
-            if _token.value[0]['c'].lower() != 'tags:':
-                continue
-            tagstr = pf.stringify(_token.value[1:]).replace(',', ' ').lower()
-            self.tags[0] = sorted(set().union(self.tags[0], tagstr.split()))
-            TLS.log.debug('xtra tags %r', tagstr.split())
-
-    def _header(self, key, val, qstn):
+    def _header(self, key, val):
         'header starts a new question'
         # Header -> [level, [slug, [(key,val),..]], [header-blocks]]
-        qstn.level = val[0]
-        qstn.title = PandocAst(as_ast(key, val)).convert('markdown')
-        qstn.title = qstn.title.strip()
-        TLS.log.debug('question title: %s', qstn.title)
+        q = self.qstn[-1]
+        q.level = val[0]
+        q.title = PandocAst(as_ast(key, val)).convert('markdown')
+        q.title = q.title.strip()
+        TLS.log.debug('question title: %s', q.title)
 
-    def _para(self, key, val, qstn):
+    def _para(self, key, val):
         # Para -> [Block], might be an <attribute:>-para
         if len(val) < 1:
             return  # nothing todo
 
+        q = self.qstn[-1]
         attrs = self._para_attr(val)
         if len(attrs):
             # it was an attr-para, retrieve only known attributes
-            qstn.answer = attrs.get('answer:', [])
-            qstn.tags = attrs.get('tags:', [])
-            qstn.section = attrs.get('section:', '')
-            qstn.explain = attrs.get('explanation:', '')
+            # skip the rest of the paragraph.
+            q.answer = attrs.get('answer:', [])
+            q.tags = attrs.get('tags:', [])
+            q.section = attrs.get('section:', '')
+            q.explain = attrs.get('explanation:', '')
         else:
-            # modify para's image urls & collect [(src,dst)'s] for copying later
+            # modify para's img urls & collect [(src,dst)'s] for copying later
             for k, v in PandocAst(val):
                 # Image -> [attrs, Inlines, target]
                 # - attrs = [ident, [classes], [(key,val)-pairs]]
                 # - Inlines = [Inline-elements]  (of the alt-text)
                 # - target = [url, title]
                 if k == 'Image':
-                    src_relpath = v[-1][0]  # is relative to src_dir
-                    dst_relpath = '{}/{}'.format(TLS.idx.dst_dir, src_relpath)
-                    v[-1][0] = dst_relpath  # is relative to dst_dir
+                    src_path = v[-1][0]  # is url or relative to src_dir
+                    if src_path.startswith('http'):
+                        continue
+                    # it should be a file on disk ...
+                    dst_path = '{}/{}'.format(TLS.idx.dst_dir, src_path)
+                    v[-1][0] = dst_path  # is relative to dst_dir
                     src_dir = os.path.dirname(TLS.idx.src_file)
-                    qstn.imgs.append(
-                        (os.path.join(src_dir, src_relpath),
-                         os.path.join(TLS.idx.dst_dir, dst_relpath)))
+                    self.imgs.append(
+                         (os.path.join(src_dir, src_path),
+                          os.path.join(TLS.idx.dst_dir, dst_path))
+                    )
 
-            qstn.ast.append(as_block(key, val))  # append as normal paragraph
+            self._ast.append(as_block(key, val))  # append as normal paragraph
 
-    def _orderedlist(self, key, val, qstn):
+    def _orderedlist(self, key, val):
         'An OrderedList is a multiple-choice (or multiple-correct) element'
         # OrderedList -> ListAttributes [[Block]]
         # - ListAttributes = (Int, ListNumberStyle, ListNumberDelim)
         # - only the first OrderedList is the choices-list for the question
-        if len(qstn.choices) > 0:
+        q = self.qstn[-1]
+        if len(q.choices) > 0:
             TLS.log.debug('ignore ordered list (already have one)')
-            qstn.ast.append(as_block(key, val))
+            self._ast.append(as_block(key, val))
         else:
             (num, style, delim), items = val
             style = style.get('t')
             delim = delim.get('t')
-
             for n, item in enumerate(items):
-                txt = PandocAst(item).convert(
-                    'markdown').strip()
-                qstn.choices.append((ol_num(n+1, style), txt))
+                txt = PandocAst(item).convert('markdown').strip()
+                q.choices.append((ol_num(n+1, style), txt))
+            TLS.log.debug('choices q[%d] is %r', len(self.qstn), q.choices)
 
     def _para_attr(self, para):
         'extract and return attributes from para (if any)'
@@ -458,7 +465,7 @@ class Parser(object):
             if attr not in self.ATTR_KEYWORDS:
                 return attrs
         except Exception as e:
-            TLS.log.debug('oops, exception seen %s', repr(e))
+            TLS.log.debug('cannot retrieve attributes from para: %s', repr(e))
             return attrs
 
         # collect subast per attribute in ATTR_KEYWORDS
@@ -469,9 +476,9 @@ class Parser(object):
                 continue
             attr = val.lower()
             if attr in self.ATTR_KEYWORDS:
-                ptr = attrs.setdefault(attr, [])  # new collection ptr
+                ptr = attrs.setdefault(attr, [])  # keyword: starts new ptr
                 continue
-            ptr.append(as_block(key, val))        # append to ptr
+            ptr.append(as_block(key, val))        # otherwise, append to ptr
 
         # process known attributes
         for attr, subast in attrs.items():
@@ -487,26 +494,40 @@ class Parser(object):
                 attrs[attr] = sorted(set(words.split()))
 
             elif attr == 'answer:':
-                # list of letters or numbers, possibly separated
+                # list of letters or numbers, possibly separated by non-alnum's
                 answers = pf.stringify(subast).lower()
                 attrs[attr] = sorted(set(x for x in answers if x.isalnum()))
 
             elif attr == 'section:':
+                # section: keyword for this question
                 words = pf.stringify(subast).replace(',', ' ').lower()
                 attrs[attr] = words.split()[0]  # keep only 1st word
 
         # log any attributes found
-        for attr, val in attrs.items():
-            TLS.log.debug('attribute %s -> %s', attr, val)
+        TLS.log.debug('found %d attributes: %s', len(attrs), attrs.keys())
         return attrs
 
-    def _codeblock(self, key, val, qstn):
+    def _codeblock(self, key, val):
         # [[id, [classes,..], [(key,val),..]], string]
+        # TODO: add support for reordering & dragndrop questions back in
         (qid, qclass, att), code = val
         if qid.lower() in ['reorder', 'dragndrop']:
             TLS.log.debug('SPECIAL CODE BLOCK %s', repr(val))
-        qstn.ast.append(as_block(key, val))
+        self._ast.append(as_block(key, val))
         TLS.log.debug('qid %s, qclass %s, attr %s', qid, qclass, att)
+
+    def _inherit_tags(self):
+        'questions inherit last section keyword & tags of lower levels'
+        level_tags = {}  # [tags] indexed by level nrs <= q.level
+        section = ''
+        for q in self.qstn:
+            section = q.section or section
+            level_tags[q.level] = q.tags
+            for high in [l for l in level_tags if l > q.level]:
+                level_tags.pop(high, None)
+            q.tags = sorted(set(chain(*level_tags.values())))
+            q.section = section
+        TLS.log.debug('%d questions tagged', len(self.qstn))
 
 
 class Quiz(object):
@@ -518,33 +539,29 @@ class Quiz(object):
     def __init__(self, idx, cfg):
         try:
             # setup TLS for this compile run
-            TLS.idx = idx
-            TLS.cfg = cfg
+            TLS.idx, TLS.cfg = idx, cfg
             self.setlogger()
 
-            TLS.log.debug('src_file %s', idx.src_file)
-            TLS.log.debug('dst_dir  %s', idx.dst_dir)
+            TLS.log.debug('Compiling %s', idx.src_file)
+            TLS.log.debug('Saving to %s/', idx.dst_dir)
 
             ast = PandocAst.convert_file(TLS.idx.src_file)
-            TLS.log.debug('ast.meta %s', repr(ast.meta))
-            p = Parser().parse(ast)
+            p = Parser(ast)
             self.meta = p.meta
             self.tags = p.tags
-            self.questions = p.qstn
-            # log results
-            unmeta = self.meta.get('unMeta', {})
-            if len(unmeta):
-                TLS.log.debug('qz %s', repr(unmeta.items()))
-                # for k, v in unmeta.items():
-                #     TLS.log.debug(' - %-12s: %r', k, v)
-            else:
-                TLS.log.debug('no meta information found')
-            TLS.log.debug('Found %s questions', len(p.qstn))
+            self.qstn = p.qstn
 
-            for nr, q in enumerate(p.qstn):
-                TLS.log.debug('qn[%d][%d]: %d choices, %d answers, tags %s',
-                              nr, q.level, len(q.choices), len(q.answer),
-                              repr(q.tags))
+            # skip q's without answers (includes level 0 q if present)
+            # self.qstn = [q for q in p.qstn if len(q.answer) > 0]
+
+            # log results
+            TLS.log.debug('meta %r', self.meta)
+            TLS.log.debug('tags %r', self.tags)
+            for nr, q in enumerate(self.qstn):
+                json_str = q.to_json()
+                qq = Question.load_json(json_str)
+                TLS.log.debug('Q%d\n%s', nr, q.to_json())
+                TLS.log.debug('QQ\n%s', qq.to_json())
 
         except Exception as e:
             TLS.log.debug('Error parsing markdown file: %s', TLS.idx.src_file)
@@ -588,7 +605,8 @@ class Quiz(object):
         'say wether or not this is a valid question'
         return False
 
-    def save(self, qstn, qid):
-        'save qstn to disk'
+    def save(self, qstn, name):
+        'save question to name on disk'
+        TLS.log.debug('saving %s to %s', qstn.title, name)
         pass
 
