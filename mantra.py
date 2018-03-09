@@ -3,15 +3,16 @@
 import os
 import json
 import urllib.parse
+import logging
 
 import dash.dependencies as dd
 import dash_core_components as dcc
 import dash_html_components as html
 
 # mantra imports
-import utils
-from log import getlogger
+import log  # Only mantra.py imports log -> creates root logger for all
 from config import cfg
+import utils
 # Mantra app and pages: app_<page>'s
 from app import app
 import app_tests
@@ -21,9 +22,15 @@ import app_settings
 import app_compile
 
 # - Module logger
-log = getlogger(__name__)
-log.debug('logger enabled')
+log = logging.getLogger(cfg.app_name)
+log.debug('logging via %s', log.name)
 
+# - log any errors/warnings
+import config
+for msg in config.errors:
+    log.error(msg)
+for msg in config.warnings:
+    log.warning(msg)
 
 # XXX: superfluous call here to create master index on disk
 log.debug('creating mantra.idx')
@@ -47,7 +54,7 @@ def urlparms(href):
     #   - frag, if any, is a single fragment, meaningful only to app_<path>
     # - examples:
     #   - /compile;test_id
-    #   - /run;test_id?q=qid
+    #   - /run;test_id?q=<nr>
     # - parsed.query := dict, repeated <param>=arg collapse into last one seen
     href = href if href else '/'
     log.debug('href %s', href)
@@ -68,26 +75,22 @@ def urlparms(href):
 
     # mantra specifics
     test_id = parsed.params if parsed.params else ''
-    test_dir = os.path.join(cfg.dst_dir, test_id)
 
     nav['page_id'] = parsed.path if parsed.path else '/'
     nav['test_id'] = test_id
-    nav['test_dir'] = os.path.join(cfg.dst_dir, test_id)
-    nav['test_log'] = os.path.join(test_dir, 'cmp.log')
-    nav['test_lock'] = os.path.join(test_dir, 'cmp.lock')
-    nav['controls'] = utils.get_domid('controls', parsed.path)  # 'app-controls-{}'.format(parsed.path)
-    nav['vars'] = utils.get_domid('vars', parsed.path)  # 'app-variables-{}'.format(parsed.path)
-    log.debug('nav %s', nav)
+    nav['controls'] = utils.get_domid('controls', parsed.path)
+    nav['vars'] = utils.get_domid('vars', parsed.path)
+    # log.debug('nav %s', nav)
     urlnav = utils.UrlNav(
         href,
         dict(urllib.parse.parse_qs(parsed.query)),
         parsed.fragment,
         parsed.path if parsed.path else '/',
-        parsed.params,
+        parsed.params if parsed.params else '',
         utils.get_domid('controls', parsed.path),
         utils.get_domid('vars', parsed.path)
     )
-    log.debug(urlnav)
+    log.debug('%s, page_id %s', href, urlnav.page_id)
     return urlnav
 
 

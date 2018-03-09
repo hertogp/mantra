@@ -6,19 +6,19 @@ import os
 import json
 import csv
 from operator import attrgetter
-
+import logging
 import dash_html_components as html
 import dash.dependencies as dd
 import dash_core_components as dcc
 
-from log import getlogger
 from app import app
 from config import cfg
 import utils
 
 # - Module logger
-log = getlogger(__name__)
-log.debug('logger created')
+log = logging.getLogger(cfg.app_name)
+# log = getlogger(__name__)
+log.debug('logging via %s', log.name)
 
 # - PAGE globals
 PATH = '/tests'

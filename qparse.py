@@ -1,7 +1,9 @@
 # -*- encoding: utf8 -*-
 import sys
 import os
+import shutil
 import copy
+import time
 import urllib.request
 import json
 import pypandoc as pp
@@ -13,10 +15,12 @@ import logging
 import threading
 
 # Mantra imports
-from log import getlogger, MethodFilter
+from config import cfg
+from log import getlogger, ThreadFilter
+import utils
 
 # Globals
-msgfmt = '%(asctime)s [%(name)s] %(funcName)s: %(message)s'
+msgfmt = '%(asctime)s [%(threadName)s] %(funcName)s: %(message)s'
 datefmt = '%H:%M:%S'
 FORMAT = logging.Formatter(fmt=msgfmt, datefmt=datefmt)
 
@@ -25,12 +29,17 @@ FORMAT = logging.Formatter(fmt=msgfmt, datefmt=datefmt)
 # - access by importing it where needed
 TLS = threading.local()
 
+# setup generic qparse logger
+# log = getlogger(__name__)
+log = logging.getLogger(cfg.app_name)
+log.debug('logging via %s', log.name)
+log.setLevel(logging.DEBUG)
+
 # pylint disable: E265
 # - helpers nopep8
 
 # Thread Local Storage for this module
 # - holds thread-specific logger instance (and test_id)
-# - all functions/methods use TLS.log.debug/info/warn etc ...
 # - logging output ends up in thread specific log file
 # - Quiz is the entry point and it's __init__ sets up the logger
 # TLS = threading.local()
@@ -217,7 +226,7 @@ class PandocAst(object):
 
     Usage:
 
-    ast = PandocAst.convert_file('file.md')   # convert markdown to AST
+    ast = PandocAst.from_file('file.md')      # convert markdown to AST
     for token in ast:                         # iterate AST's tokens
         print(token)
 
@@ -242,13 +251,13 @@ class PandocAst(object):
 
     # Alternate constructor
     @classmethod
-    def convert_file(cls, filename, fmt=None, opts=None):
+    def from_file(cls, filename, fmt=None, opts=None):
         fmt = '+'.join([fmt or cls.FMT] + (opts or cls.MD_OPTS))
         try:
             txt = pp.convert_file(filename, 'json', format=fmt)
             meta, ast = json.loads(txt)
         except Exception as e:
-            TLS.log.debug('cannot convert file %r\n  ->  (%s)', filename, repr(e))
+            log.debug('cannot convert file %r\n  ->  (%s)', filename, repr(e))
             raise QError('err converting file {!r}'.format(filename)) from e
         return cls(ast, meta)
 
@@ -269,7 +278,7 @@ class PandocAst(object):
         for _tok in self:
             if _tok.type == u'Header':
                 # words = pf.stringify(subast).replace(',', ' ').lower()
-                TLS.log.debug('lvl[%s] %r', level, pf.stringify(_tok.value))
+                log.debug('lvl[%s] %r', level, pf.stringify(_tok.value))
                 yield level, ast                 # yield last header's ast
                 level, ast = _tok.value[0], []   # start this header's new ast
             ast.append(as_block(*_tok))
@@ -323,8 +332,15 @@ class Question(object):
         try:
             return cls(**json.loads(json_str))
         except Exception as err:
-            TLS.log.error('cannot load json string\n%s', json_str)
+            log.error('cannot load json string\n%s', json_str)
             raise QError('Error creating Question from a json string') from err
+
+    # alternate constructor
+    @classmethod
+    def read(cls, filename):
+        'Create new Question from file in json format, ignores unknown attrs'
+        with open(filename, 'rt') as fh:
+            return cls.load_json(fh.read())
 
     def to_json(self):
         'dump to json string'
@@ -333,24 +349,33 @@ class Question(object):
         json_str = json.dumps(attrs, indent=3)
         return json_str
 
+    def save(self, filename):
+        with open(filename, 'wt') as fh:
+            fh.write(self.to_json())
+
 
 class Parser(object):
     'Parse a PandocAst into a list of 0 or more Questions'
     # an Attribute Para starts with one of these:
     ATTR_KEYWORDS = ['tags:', 'answer:', 'explanation:', 'section:']
 
-    def __init__(self, doc_ast):
+    def __init__(self, idx):
+        self.idx = idx    # src to be compiled
         self.meta = {}    # doc's yaml meta data
         self.tags = []    # document tags (from meta)
         self.qstn = []    # list of individual Question's or front matter
         self.imgs = []    # [(src_img, dst_img), ..] to be copied
+        self.intro = ''   # q-zero's text, if any, is intro story
+        self.flags = []   # [sS][iI][dD]
 
+    def parse(self):
+        doc_ast = PandocAst.from_file(self.idx.src_file)
         self._docmeta(doc_ast.meta)            # process meta data
+
         for level, header in doc_ast.headers:
             self._ast = []                     # ast for question being parsed
             self.qstn.append(Question())       # new empty Question
             ptr = self.qstn[-1]                # shorthand to new Question
-            TLS.log.debug('new Q: choices is %r', ptr.choices)
             hdr = PandocAst(header)            # setup for iteration of tokens
             ptr.markdown = hdr.convert()       # org markdown question text
 
@@ -369,11 +394,12 @@ class Parser(object):
             ptr.text = PandocAst(self._ast).convert('markdown')
 
         self._inherit_tags()  # higher levels inherit lower level tags
+        self._prune()         # remove non-questions
+        return self
 
     def _docmeta(self, meta):
-        'update meta data and adopt any tags'
-        self.meta.update(meta)
-        unmeta = self.meta.setdefault(u'unMeta', {})
+        'update meta data and adopt any document level tags'
+        unmeta = meta.get(u'unMeta', {})
         for key, val in unmeta.items():
             # bare numbers in yaml header -> {'t': 'MetaString', 'c': 'digits'}
             # not as 'MetaInlines'-blocks, pf.stringify makes 'em disappear?
@@ -384,7 +410,7 @@ class Parser(object):
                 continue
             tags = unmeta[key].lower().replace(',', ' ').split()
             self.tags = sorted(set(tags))
-            TLS.log.debug('doc tags %r', self.tags)
+        self.meta.update(unmeta)
 
     def _header(self, key, val):
         'header starts a new question'
@@ -393,7 +419,7 @@ class Parser(object):
         q.level = val[0]
         q.title = PandocAst(as_ast(key, val)).convert('markdown')
         q.title = q.title.strip()
-        TLS.log.debug('question title: %s', q.title)
+        log.debug('[level %d] %s', q.level, q.title)
 
     def _para(self, key, val):
         # Para -> [Block], might be an <attribute:>-para
@@ -421,12 +447,12 @@ class Parser(object):
                     if src_path.startswith('http'):
                         continue
                     # it should be a file on disk ...
-                    dst_path = '{}/{}'.format(TLS.idx.dst_dir, src_path)
+                    dst_path = '{}/{}'.format(self.idx.dst_dir, src_path)
                     v[-1][0] = dst_path  # is relative to dst_dir
-                    src_dir = os.path.dirname(TLS.idx.src_file)
+                    src_dir = os.path.dirname(self.idx.src_file)
                     self.imgs.append(
                          (os.path.join(src_dir, src_path),
-                          os.path.join(TLS.idx.dst_dir, dst_path))
+                          os.path.join(self.idx.dst_dir, dst_path))
                     )
 
             self._ast.append(as_block(key, val))  # append as normal paragraph
@@ -438,7 +464,7 @@ class Parser(object):
         # - only the first OrderedList is the choices-list for the question
         q = self.qstn[-1]
         if len(q.choices) > 0:
-            TLS.log.debug('ignore ordered list (already have one)')
+            log.debug('ignore ordered list (already have one)')
             self._ast.append(as_block(key, val))
         else:
             (num, style, delim), items = val
@@ -447,7 +473,7 @@ class Parser(object):
             for n, item in enumerate(items):
                 txt = PandocAst(item).convert('markdown').strip()
                 q.choices.append((ol_num(n+1, style), txt))
-            TLS.log.debug('choices q[%d] is %r', len(self.qstn), q.choices)
+            log.debug('choices q[%d] is %r', len(self.qstn), q.choices)
 
     def _para_attr(self, para):
         'extract and return attributes from para (if any)'
@@ -465,7 +491,7 @@ class Parser(object):
             if attr not in self.ATTR_KEYWORDS:
                 return attrs
         except Exception as e:
-            TLS.log.debug('cannot retrieve attributes from para: %s', repr(e))
+            log.debug('cannot retrieve attributes from para: %s', repr(e))
             return attrs
 
         # collect subast per attribute in ATTR_KEYWORDS
@@ -504,7 +530,7 @@ class Parser(object):
                 attrs[attr] = words.split()[0]  # keep only 1st word
 
         # log any attributes found
-        TLS.log.debug('found %d attributes: %s', len(attrs), attrs.keys())
+        log.debug('found %d attributes: %s', len(attrs), attrs.keys())
         return attrs
 
     def _codeblock(self, key, val):
@@ -512,9 +538,9 @@ class Parser(object):
         # TODO: add support for reordering & dragndrop questions back in
         (qid, qclass, att), code = val
         if qid.lower() in ['reorder', 'dragndrop']:
-            TLS.log.debug('SPECIAL CODE BLOCK %s', repr(val))
+            log.debug('SPECIAL CODE BLOCK %s', repr(val))
         self._ast.append(as_block(key, val))
-        TLS.log.debug('qid %s, qclass %s, attr %s', qid, qclass, att)
+        log.debug('qid %s, qclass %s, attr %s', qid, qclass, att)
 
     def _inherit_tags(self):
         'questions inherit last section keyword & tags of lower levels'
@@ -527,7 +553,103 @@ class Parser(object):
                 level_tags.pop(high, None)
             q.tags = sorted(set(chain(*level_tags.values())))
             q.section = section
-        TLS.log.debug('%d questions tagged', len(self.qstn))
+        log.debug('%d questions tagged', len(self.qstn))
+        return self
+
+    def _prune(self):
+        'remove question-less headers'
+        # these only serve to group questions into logical units in the doc
+        idxs = []
+        for nr, q in enumerate(self.qstn):
+            if len(q.choices) == 0 or len(q.answer) == 0:
+                idxs.append(nr)
+        log.debug('total %d, pruned %d -> %d remaining',
+                  len(self.qstn), len(idxs), len(self.qstn) - len(idxs))
+        for idx in reversed(idxs):
+            del self.qstn[idx]
+        return self
+
+
+def _copy_files(src_dst):
+    'safely copy src to dst (if src is newer)'
+    for src, dst in src_dst:
+        try:
+            # src available and readable
+            if not os.access(src, os.R_OK):
+                log.error(' - skip missing src %s', src)
+                continue
+
+            dst_dir = os.path.dirname(dst)
+            os.makedirs(dst_dir, exist_ok=True)
+
+            if not os.access(dst, os.F_OK) or\
+                    os.path.getmtime(src) > os.path.getmtime(dst):
+                    shutil.copy2(src, dst)
+                    log.info('- add %s', dst)
+            else:
+                log.info('- keep %s', dst)
+        except OSError:
+            log.exception('copy failed %s -> %s', src, dst)
+
+
+def convert(idx):
+    'convert <src_dir>/path_to_srcfile to <dst_dir>/<test_id>/-files'
+    # Add test_id specific handler for this logger
+    TLS.logfile = os.path.join(idx.dst_dir, 'mtr.log')
+    TLS._handler = logging.FileHandler(TLS.logfile)
+    TLS._handler.setFormatter(FORMAT)
+    TLS._handler.addFilter(ThreadFilter(threading.current_thread().name))
+    log.addHandler(TLS._handler)
+    log.info('Parsing source: %s', idx.src_file)
+
+    # parse the source file -> p.meta, p.tags, p.qstn
+    p = Parser(idx).parse()
+
+    # clear output directory (carefully)
+    log.info('Delete (most) files:')
+    for fname in utils.yield_files(idx.dst_dir, '.*'):
+        if fname != TLS.logfile and not fname.endswith('.png'):
+            log.info('- del %s', fname)
+            os.remove(fname)
+
+    # save to dst_dir
+    log.info('Add new files:')
+    for nr, q in enumerate(p.qstn):
+        qfname = os.path.join(idx.dst_dir, 'q{:03d}.json'.format(nr))
+        q.save(qfname)
+        log.debug('- add %s', qfname)
+    log.info('Copy images (if needed):')
+    _copy_files(p.imgs)  # copy any newer/missing images
+
+    # create mtr.idx
+    log.info('meta is %r', p.meta)
+    idx = idx._replace(cflags=utils.F_PLAYABLE,
+                       numq=len(p.qstn),
+                       grade=p.meta.get('grade', 0))
+    fname = os.path.join(idx.dst_dir, 'mtr.idx')
+    with open(fname, 'wt') as fh:
+        fh.write(json.dumps(idx))
+        log.info('Created %s', fname)
+        for fld in idx._fields:
+            log.info('- %-8s: %s', fld, getattr(idx, fld))
+
+    # create quiz.json
+    log.debug('meta:')
+    for k, v in p.meta.items():
+        log.debug('%-12s: %s', k, v)
+
+    # remove compile job specific handler
+    try:
+        log.debug('all work is done, bye!')
+        time.sleep(2)
+        log.removeHandler(TLS._handler)
+        os.remove(TLS.logfile)
+    except OSError:
+        log.exception('Could not remove compiler logfile')
+    except Exception:
+        log.exception('TLS error, could not remove TLS._handler, thread died?')
+
+    pass
 
 
 class Quiz(object):
@@ -536,40 +658,38 @@ class Quiz(object):
     Log messages to logfile (relative to dstdir)
     '''
     # this class ties PandocAst and Parser together
-    def __init__(self, idx, cfg):
+    def __init__(self, idx):  # , cfg=None):
         try:
             # setup TLS for this compile run
             TLS.idx, TLS.cfg = idx, cfg
             self.setlogger()
 
-            TLS.log.debug('Compiling %s', idx.src_file)
-            TLS.log.debug('Saving to %s/', idx.dst_dir)
+            log.debug('Compiling %s', idx.src_file)
+            log.debug('Saving to %s/', idx.dst_dir)
 
-            ast = PandocAst.convert_file(TLS.idx.src_file)
-            p = Parser(ast)
+            p = Parser(idx).parse()
             self.meta = p.meta
             self.tags = p.tags
             self.qstn = p.qstn
 
-            # skip q's without answers (includes level 0 q if present)
-            # self.qstn = [q for q in p.qstn if len(q.answer) > 0]
-
             # log results
-            TLS.log.debug('meta %r', self.meta)
-            TLS.log.debug('tags %r', self.tags)
+            log.debug('meta %r', self.meta)
+            log.debug('tags %r', self.tags)
             for nr, q in enumerate(self.qstn):
-                json_str = q.to_json()
-                qq = Question.load_json(json_str)
-                TLS.log.debug('Q%d\n%s', nr, q.to_json())
-                TLS.log.debug('QQ\n%s', qq.to_json())
+                log.debug('Q%d\n%s', nr, q.to_json())
 
+            # Update TLS.idx with results
+            TLS.idx._replace(numq=len(self.qstn), cflags=0)
+
+            self.save()
         except Exception as e:
-            TLS.log.debug('Error parsing markdown file: %s', TLS.idx.src_file)
+            log.debug('Error parsing markdown file: %s', TLS.idx.src_file)
             raise QError('Error parsing markdown file: {}'.format(e))
 
     def __del__(self):
         'instance bucketlist'
         # if any exceptions are raised, TLS might be gone
+        global log
         import shutil
         import time
         time.sleep(2)  # so mantra reads/displays last status as well
@@ -578,35 +698,47 @@ class Quiz(object):
             # XXX: delme, for debug/review purposes only
             shutil.copyfile(TLS.logfile, TLS.logfile + '.delme')
             os.remove(TLS.logfile)
-            TLS.log.debug('all work is done, bye!')
-            TLS.log.removeHandler(TLS._handler)
-            del TLS.log
+            log.debug('all work is done, bye!')
+            log.removeHandler(TLS._handler)
         except Exception:
             log = getlogger()
             log.exception('TLS error, could not delete TLS.log, thread died?')
 
     def __iter__(self):
         'iterate across available questions in a Quiz instance'
-        return iter(self.questions)
+        return iter(self.qstn)
 
     def setlogger(self):
         'create and set an thread specific logger'
-        TLS.log = getlogger(TLS.idx.test_id)
-        TLS.log.propagate = False               # qparse logs stop here
-        TLS.log.setLevel(logging.DEBUG)
-        TLS.log.addFilter(MethodFilter())
         TLS.logfile = os.path.join(TLS.idx.dst_dir, 'mtr.log')
         TLS._handler = logging.FileHandler(TLS.logfile)
         TLS._handler.setFormatter(FORMAT)
-        TLS.log.addHandler(TLS._handler)
-        return TLS.log
+        TLS._handler.addFilter(ThreadFilter(threading.current_thread().name))
+        log.addHandler(TLS._handler)
+        return log
 
     def valid(qstn):
         'say wether or not this is a valid question'
         return False
 
-    def save(self, qstn, name):
-        'save question to name on disk'
-        TLS.log.debug('saving %s to %s', qstn.title, name)
-        pass
+    def save(self):
+        'save questions to disk'
+        # MtrIdx = namedtuple, with fields:
+        # src_file, src_hash, dst_dir, category, test_id, grade, score, numq,
+        # cflags
+        dst_dir = TLS.idx.dst_dir
+        log.debug('clearing %s/q*.json', dst_dir)
+        log.debug('clearing %s/img/*.png', dst_dir)
+
+        for nr, q in enumerate(self.qstn):
+            qfile = 'q{:03d}.json'.format(nr)
+            log.debug('- saving %s to dir %s', qfile, dst_dir)
+            with open(os.path.join(dst_dir, qfile), 'wt') as fh:
+                fh.write(q.to_json())
+
+        with open(os.path.join(dst_dir, 'mtr.idx'), 'wt') as fh:
+            fh.write(json.dumps(TLS.idx))
+
+        for field in TLS.idx._fields:
+            log.debug('idx.%s -> %s', field, getattr(TLS.idx, field))
 

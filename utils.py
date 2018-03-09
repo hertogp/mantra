@@ -15,12 +15,14 @@ import yaml
 from collections import namedtuple
 from functools import wraps
 from inspect import ismethod, isfunction
+import logging
 
-from log import getlogger
 from config import cfg
 
 
 # -- Globals
+log = logging.getLogger(cfg.app_name)
+log.debug('logging via %s', log.name)
 
 DOM_ID_TYPES = [
     'controls',   # cache for controls on a page
@@ -58,15 +60,9 @@ UrlNav = namedtuple('UrlNav', [
     'frag',        # if any found end of url
     'page_id',     # page handling this url (if any)
     'test_id',     # if any found in url
-    'controls',  # DOM id of page's control cache
+    'controls',    # DOM id of page's control cache
     'vars',        # DOM id of page's var cache
 ])
-
-# -- Module logger
-
-
-log = getlogger(__name__)
-log.debug('logger enabled')
 
 
 # -- dumpers
@@ -202,7 +198,7 @@ def hashfnv64(text, salt=''):
     return base64.urlsafe_b64encode(hash_b)[:-1].decode('ascii')
 
 
-def src_test_id(filename):
+def get_test_id(filename):
     'fnv64 hash of basename and category of a src filename'
     basename = os.path.basename(filename)
     category = os.path.relpath(os.path.dirname(filename), cfg.src_dir)
@@ -286,8 +282,9 @@ def idx_by_dst():
     # XXX: update so orpahned subdirs without mtr.idx are added as well
     index = {}  # [test_id] -> cfg.dst_dir's mtr.idx index entry
     for idx_file in yield_files(cfg.dst_dir, TEST_IDX):
-        dta = yaml.safe_load(open(idx_file))
-        idx = MtrIdx(*(dta.get(x, None) for x in MtrIdx._fields))
+        with open(idx_file, 'rt') as fh:
+            # dta = json.loads(fh.read())
+            idx = MtrIdx(*json.loads(fh.read())) # dta)
         dst_dir = os.path.dirname(idx_file)
         test_id = os.path.relpath(dst_dir, cfg.dst_dir)
         if test_id == '.':
@@ -310,17 +307,17 @@ def idx_by_src():
         category = os.path.relpath(src_dir, cfg.src_dir)
         if category == '.':
             continue  # skip files in cfg.src_dir itself
-        test_id = src_test_id(src_file)
+        test_id = get_test_id(src_file)
         dst_dir = os.path.join(cfg.dst_dir, test_id)
         log.debug('add %s', test_id)
         index[test_id] = MtrIdx(src_file, file_checksum(src_file), dst_dir,
-                                category, src_test_id(src_file), 0, 0, 0, 0)
+                                category, get_test_id(src_file), 0, 0, 0, 0)
     return index
 
 
 def idx_flags(idx):
     'run checks on idx and return error-flags as cflags'
-    cflags = idx.cflags
+    cflags = 0
     try:
         if not os.access(idx.src_file, os.R_OK):
             cflags |= F_SRCERROR  # src not available/readable
@@ -382,7 +379,7 @@ def mtr_idx_create():
 
     # log results
     for test_id, idx in master.items():
-        log.debug('%s -> %s', test_id, idx)
+        log.debug('%s -> %s', test_id, idx.src_file)
 
     # write to disk
     with open(os.path.join(cfg.dst_dir, MSTR_IDX), 'wt') as f:

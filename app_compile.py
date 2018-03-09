@@ -7,14 +7,15 @@ import os
 import json
 import time
 import threading
+import logging
 import dash_html_components as html
 import dash_core_components as dcc
 import dash.dependencies as dd
 
-from log import getlogger
+# App imports
 from app import app
 from config import cfg
-from qparse import Quiz
+import qparse
 import utils
 
 
@@ -27,8 +28,8 @@ PROGRESS = '{}-progress'.format(DISPLAY)
 TIMER = '{}-timer'.format(DISPLAY)
 
 # - Module logger
-log = getlogger(__name__)
-log.debug('logger created')
+log = logging.getLogger(cfg.app_name)
+log.debug('logging via %s', log.name)
 
 # - Module functionality
 
@@ -51,19 +52,21 @@ def compiler(nav):
         log.error('no index entry for %s', nav.test_id)
         return False
 
+    rv = qparse.convert(idx)
+
     log.debug('starting on %s' % nav.test_id)
 
     # get dest dir for compiler output
     # - or put dst_root = cfg.dst_dir in idx?
-    qz = Quiz(idx, cfg)
+    # qz = qparse.Quiz(idx)
 
     # log any errors in qz to app log
     # display qparse log results in case of errors
-    log.debug('%s tags: %s', nav.test_id, qz.tags)
-    log.debug('%s meta: %s', nav.test_id, qz.meta)
-    log.debug('%s qstn: %s', nav.test_id, len(qz.questions))
+    # log.debug('%s tags: %s', nav.test_id, qz.tags)
+    # log.debug('%s meta: %s', nav.test_id, qz.meta)
+    # log.debug('%s qstn: %s', nav.test_id, len(qz.qstn))
 
-    del qz
+    # del qz
 
     return True
 
@@ -115,11 +118,11 @@ def display(nav, controls, display):
     [dd.State('app-nav', 'children')])
 def terminate(n_intervals, nav):
     OFF = '86400000'  # str(24*60*60*1000) update once per day
-    ON = '1000'  # str(1*1000) update every second
+    ON = '500'       # str(1*1000) update every second
     nav = utils.UrlNav(*json.loads(nav))
-    log.debug('interval %s for nav %s', n_intervals, nav)
+    log.debug('interval %s for nav %s', n_intervals, nav.test_id)
 
-    # callbacks are in random order, so donot terminate unless
+    # callbacks fire in random order, so donot terminate unless
     # we've had <n>-interval cycles...
     if n_intervals < 2:
         return ON
@@ -128,7 +131,6 @@ def terminate(n_intervals, nav):
         return OFF
 
     logfile = os.path.join(cfg.dst_dir, nav.test_id, 'mtr.log')
-    # with threading.Lock():
     if not os.path.isfile(logfile):
         log.debug('TERMINATE!')
         return OFF
@@ -151,28 +153,36 @@ def progress(intervals, nav, progress):
     logfile = os.path.join(dst_dir, 'mtr.log')
 
     if intervals == 0:
+
+        # first time around: start a compile process if no logfile currently
+        # exists, otherwise 'join' running process. Its results are displayed
+        # the 2nd++ time around
+
         with threading.Lock():
             if not os.path.isfile(logfile):
-                t = threading.Thread(target=compiler, args=(nav,))
+                t = threading.Thread(target=compiler,
+                                     args=(nav,),
+                                     name=nav.test_id)
                 os.makedirs(dst_dir, exist_ok=True)
+                msg = '{} {} starting on target {}\n'.format(
+                    time.strftime('%Y%m%d %H:%M:%S'), t.name, nav.test_id)
                 with open(logfile, 'w') as fh:
-                    msg = '{} compiled by {}'.format(nav.test_id, t.name)
                     fh.write(msg)
-                    fh.write(time.strftime(' %Y%m%d %H:%M:%S\n',
-                                           time.localtime()))
                 t.start()
-                log.debug(msg)
+                log.info(msg)
                 return html.Div(msg)
             else:
                 log.debug('joining running compile thread for %s', nav.test_id)
                 return html.Div('Joining ...')
 
-    # Display compiler results until done!
     if not os.path.isfile(logfile):
-        return html.Div(children=[
-            progress,
-            'link to play results if all went ok']
-                        )
+        # logfile is gone, we're done. Param progress is last logfile displayed
+        # - TODO: what to do when all work is done
+        return html.Div(
+            children=[progress, 'link to play results if all went ok']
+        )
+
+    # Compilation is still running, display results
     with open(logfile, 'r') as fh:
         rv = fh.readlines()
 
