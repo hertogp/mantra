@@ -22,29 +22,39 @@ import yaml
 #       |       |- <test_id>/        -> <test_id>'s compile dst dir
 #       |            |- mtr.log         -> temp lock & log file
 #       |            |- mtr.idx         -> this test's idx
-#       |            |- q<3d>.json      -> question in json format
+#       |            |- img.idx         -> [(src.img, dst.img), ..] fullpaths
+#       |            |- lead.md         -> leading page for test (< 1st hdr)
+#       |            |- quiz.json       -> src.md's meta data
+#       |            |- qddd.json       -> question in json format
 #       |            |- img/
 #       |                |- img.png     -> images for questions in <test_id>
+#       |
 #       |- <static>/
 #           |- css
 #           |- js
 #           |- img                      -> has favicon.ico for GET /favicon.ico
 #           |- webfonts
 #
-# ------------------------------------------------------------------------------
-# Ideally:
-# - source.md & all its images are available
-# - dst's mtr.idx is more recent than source.md or any image
-# - all images accounted for in dst
-#
-# but, things may go awry:
-# - source gone missing, but destination is still there
-# - source.md is newer than compiled version of questions
-# - destination is newer that source (weird, but possible)
-# - source.md has not been compiled yet (test_id missing under mtr_dir)
-# - 1 or more src images are missing (based on source.md)
-# - 1 or more dst images are missing (based on source.md)
-# - 1 or more src images are newer than dst images (based on source.md)
+# -----------------------------------------------------------------------------
+# {path}/src.md, {imgs.png} -> <test_id>/mtr.idx,img.idx,q<d>.json,img/imgs.png
+# -----------------------------------------------------------------------------
+# Actions on dst:
+# - create   C (cog f013) if src.md newer than test_id/mtr.idx (or its missing)
+# - update   U (download f019) any src.img's newer than its dst.img (img.idx)
+# - delete   D delete <test_id> (all files including directory)
+# - assess   A take an exam and assess your expertise
+# Note:
+# - Mantra never deletes a src.md or src.img! only its own derived products
+# - orphan   O (child f1ae) is a test_id whose src.md has gone missing
+# - COU flags C(reatable), O(rphaned), U(pdatable)
+# -----------------------------------------------------------------------------
+# mantra.idx =  category, src.md, test_id, src_mtime, dst_mtime, C/U/O/I-flags
+# mtr.idx    =  category, src.md, test_id, numq, score
+# img.idx    =  [(src.img, dst.img), ..]
+# quiz.json  =  org doc's meta data; grade, maxtime, etc ...
+# lead.md   =  first page of quiz to display (stuff before 1st header)
+# -----------------------------------------------------------------------------
+
 
 _DEFAULTS = (
     ('root', os.getcwd()),           # root dir for all

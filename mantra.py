@@ -9,24 +9,21 @@ import dash.dependencies as dd
 import dash_core_components as dcc
 import dash_html_components as html
 
-# mantra imports
+# App import
 import log  # Only mantra.py imports log -> creates root logger for all
 from config import cfg
 import utils
-# Mantra app and pages: app_<page>'s
 from app import app
 import app_tests
 import app_review
 import app_upload
 import app_settings
 import app_compile
+import config
 
 # - Module logger
 log = logging.getLogger(cfg.app_name)
 log.debug('logging via %s', log.name)
-
-# - log any errors/warnings
-import config
 for msg in config.errors:
     log.error(msg)
 for msg in config.warnings:
@@ -37,10 +34,9 @@ log.debug('creating mantra.idx')
 
 # remove lingering mtr.log files (server interrupted during compile)
 utils.mtr_idx_create()
-for fname in utils.find_files(cfg.dst_dir, 'mtr.log'):
-    if fname.endswith('mtr.log'):
-        log.debug('removing residue (%s)', fname)
-        os.remove(fname)
+for fname in utils.glob_files(cfg.dst_dir, ['[!.]*/mtr.log']):
+    log.debug('removing residue (%s)', fname)
+    os.remove(os.path.join(cfg.dst_dir, fname))
 
 
 # - Helpers

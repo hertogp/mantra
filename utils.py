@@ -11,12 +11,15 @@ import hashlib
 import pathlib
 import time
 import json
-import yaml
+import fnmatch
 from collections import namedtuple
 from functools import wraps
 from inspect import ismethod, isfunction
 import logging
 
+# TODO: make utils independent of cfg or Mantra in general
+# - cannot import utils in tests without import the whole app
+# App imports
 from config import cfg
 
 
@@ -263,19 +266,171 @@ def yield_files(topdir, patterns, recurse=True):
         if not recurse:
             break
 
-# src_root/<cat:path>/src<x>.md
-#                    /img/img<y>.png
-# compiling gives ->
-# dst_root/<test_id>/mtr.his        - required: history of tests taken + results
-#                   /mtr.idx        - required: index details (src, name, num q's, ..)
-#                   /mtr.log        - optional: compiler log/lock file
-#                   /q001.json      - required: first question
-#                   /..             - .. more questions
-#                   /quiz.yml       - required: test info (like passing score etc..)
-#                   /img/img<y>.png - optional: images of questions
-# create_index gives ->
-# dst_root/mtr.idx                  - master index across srcs/dsts
 
+def rgx_iter_files(topdir, include=None, exclude=None):
+    'yield rgx included & not rgx excluded filepaths relative to topdir'
+    include = [re.compile('.*')] if include is None else include
+    exclude = [] if exclude is None else exclude
+
+    for dirname, _, fnames in os.walk(topdir):
+        reldir = os.path.relpath(dirname, topdir)
+        for fname in fnames:
+            relpath = os.path.join(reldir, fname)
+            if not any(rgx.match(relpath) for rgx in include):
+                continue
+            if any(rgx.match(relpath) for rgx in exclude):
+                continue
+            yield relpath
+
+
+def glob_files(topdir, includes=None, excludes=None):
+    'list glob included & then not excluded filepaths relative to topdir'
+    includes = ['*'] if includes is None else includes
+    excludes = [] if excludes is None else excludes
+
+    accept = [re.compile(fnmatch.translate(p)) for p in includes]
+    ignore = [re.compile(fnmatch.translate(p)) for p in excludes]
+
+    for dirname, subdirs, files in os.walk(topdir):
+        reldir = os.path.relpath(dirname, topdir)
+        for fname in files:
+            relpath = os.path.join(reldir, fname)
+            if not any(r.match(relpath) for r in accept):
+                continue
+            if any(r.match(relpath) for r in ignore):
+                continue
+            yield relpath
+
+class MantraIdx:
+    'the index of tests based on src.md and its mtr.idx, img.idx files'
+    # no need for dst include/exclude since those names are fixed
+    # donot include any files in src_dir (topdir)
+    INCLUDE = ['[!.]**/*.md', '[!.]**/*.markdown', '[!.]**/*.pd']
+    EXCLUDE = ['**/notes.*', '**/index.*']
+
+    def __init__(self, src_dir, dst_dir, sync=True):
+        'if sync is False, manual <instance>.sync() required'
+        if not os.path.isdir(src_dir):
+            raise Exception('src_dir %s is missing' % src_dir)
+        if not os.path.isdir(dst_dir):
+            raise Exception('dst_dir %s is missing' % dst_dir)
+
+        self.src_dir = src_dir
+        self.dst_dir = dst_dir
+        self.set_filter()
+        self.idx = {}
+        if sync:
+            self.sync()
+
+    def __iter__(self):
+        for k, v in self.idx.items():
+            yield (k, *v)
+
+    def sync(self):
+        'sync index to files present on disk'
+        self.idx.clear()
+        return self._add_srcs()._add_dsts()
+
+    def save(self, outname='mantra.idx'):
+        'save index to dst_dir/mantra.idx'
+        fname = os.path.join(self.dst_dir, outname)
+        try:
+            with open(fname, 'wt') as fh:
+                fh.write(json.dumps(self.idx))
+        except OSError:
+            print('error: could not save mantra.idx')
+
+        return self
+
+    def read(self, inpname='mantra.idx'):
+        'read index from dst_dir/mantra.idx'
+        fname = os.path.join(self.dst_dir, inpname)
+        try:
+            with open(fname, 'rt') as fh:
+                self.idx = json.loads(fh.read())
+        except OSError:
+            print('error: could not read %s' % fname)
+
+        return self
+
+    def set_filter(self, include=None, exclude=None):
+        'set include/exclude globs for src files (None means use default)'
+        include = self.INCLUDE if include is None else include
+        exclude = self.EXCLUDE if exclude is None else exclude
+        self.include = [re.compile(fnmatch.translate(p)) for p in include]
+        self.exclude = [re.compile(fnmatch.translate(p)) for p in exclude]
+        self.dst_inc = [re.compile(fnmatch.translate('[!.]**/mtr.idx'))]
+        return self
+
+    def _add_srcs(self):
+        'add idx entries based on sources'
+        for frel in rgx_iter_files(self.src_dir, self.include, self.exclude):
+            src = os.path.join(self.src_dir, frel)
+            cat = os.path.dirname(frel)
+            test_id = fnv64(os.path.basename(frel), cat)
+            dst = os.path.join(self.dst_dir, test_id, 'mtr.idx')
+            dst_mtime = os.path.getmtime(dst) if os.path.isfile(dst) else 0
+            src_mtime = os.path.getmtime(src)  # should exist.
+            # flags: C(reate) dst, U(pdate) dst, P(lay) dst
+            flag = 'U' if src_mtime > dst_mtime else 'P'
+            flag = 'C' if dst_mtime == 0 else flag  # special case 'updatable'
+            self.idx[test_id] = (flag, src, cat)
+
+        return self
+
+    def _read_img_idx(self, fname):
+        'return list of [(src.img, dst.img)] or []'
+        try:
+            with open(fname) as fh:
+                imgs = json.loads(fh.read())
+        except OSError:
+            return []  # simply might not be there
+        except Exception:
+            print('error reading json encoded img index %s' % fname)
+            return []
+        return imgs
+
+    def _read_mtr_idx(self, fname):
+        'return python obj from mtr.idx file or None in case of errors'
+        try:
+            with open(fname) as fh:
+                obj = json.loads(fh.read())
+        except OSError:
+            print('error reading mtr idx %s' % fname)
+            return None
+        except Exception:
+            print('error reading json encoded mtr idx %s' % fname)
+            return None
+        return obj
+
+    def _add_dsts(self):
+        'add/update idx entries based on destinations'
+        for frel in rgx_iter_files(self.dst_dir, self.dst_inc):
+            if frel.count('/') != 1:
+                print('error: weirdly placed mtr.idx', frel)
+                continue
+
+            test_id = os.path.dirname(frel)
+            if test_id not in self.idx:
+                # flag: O(rphaned) but playable (hopefully)
+                fname = os.path.join(self.dst_dir, test_id, 'mtr.idx')
+                idx = self._read_mtr_idx(fname)
+                print(test_id, idx)
+                self.idx[test_id] = ('O', 'orig_src.md', 'orig_cat')
+                continue
+
+            # set flag to U(pdateable) if at least 1 src.img is newer
+            fname = os.path.join(self.dst_dir, test_id, 'img.idx')
+            imgs = self._read_img_idx(fname)
+            for src, dst in imgs:
+                stime = os.path.getmtime(src) if os.path.isfile(src) else 0
+                dtime = os.path.getmtime(dst) if os.path.isfile(dst) else 0
+                if stime > dtime:
+                    f, src, cat = self.idx[test_id]
+                    self.idx[test_id] = ('U', src, cat)  # at least 1 newer img
+                    break
+
+        return self
 
 def idx_by_dst():
     'collect index entries by dst_dir/<test_id>/mtr.idx-files'
