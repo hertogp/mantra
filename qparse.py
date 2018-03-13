@@ -16,7 +16,7 @@ import threading
 
 # Mantra imports
 from config import cfg
-from log import getlogger, ThreadFilter
+from logger import ThreadFilter
 import utils
 
 # Globals
@@ -30,7 +30,6 @@ FORMAT = logging.Formatter(fmt=msgfmt, datefmt=datefmt)
 TLS = threading.local()
 
 # setup generic qparse logger
-# log = getlogger(__name__)
 log = logging.getLogger(cfg.app_name)
 log.debug('logging via %s', log.name)
 log.setLevel(logging.DEBUG)
@@ -701,7 +700,6 @@ class Quiz(object):
             log.debug('all work is done, bye!')
             log.removeHandler(TLS._handler)
         except Exception:
-            log = getlogger()
             log.exception('TLS error, could not delete TLS.log, thread died?')
 
     def __iter__(self):

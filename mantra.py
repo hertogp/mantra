@@ -10,7 +10,7 @@ import dash_core_components as dcc
 import dash_html_components as html
 
 # App import
-import log  # Only mantra.py imports log -> creates root logger for all
+import logger  # Only mantra.py imports logger -> creates root logger for all
 from config import cfg
 import utils
 from app import app
@@ -21,7 +21,12 @@ import app_settings
 import app_compile
 import config
 
+# silence the flask logger a little
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
 # - Module logger
+logger.setup(cfg.app_name, cfg.log_file)
 log = logging.getLogger(cfg.app_name)
 log.debug('logging via %s', log.name)
 for msg in config.errors:
@@ -29,11 +34,10 @@ for msg in config.errors:
 for msg in config.warnings:
     log.warning(msg)
 
-# XXX: superfluous call here to create master index on disk
-log.debug('creating mantra.idx')
-
 # remove lingering mtr.log files (server interrupted during compile)
-utils.mtr_idx_create()
+utils.mtr_idx_create(config.cfg.src_dir,
+                     config.cfg.dst_dir,
+                     config.cfg.tst_ext)
 for fname in utils.glob_files(cfg.dst_dir, ['[!.]*/mtr.log']):
     log.debug('removing residue (%s)', fname)
     os.remove(os.path.join(cfg.dst_dir, fname))

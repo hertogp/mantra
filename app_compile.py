@@ -46,7 +46,7 @@ def compiler(nav):
         return False
 
     # get src details (MtrIdx tuple) to compile
-    master_idx = utils.mtr_idx_read()
+    master_idx = utils.mtr_idx_read(cfg.dst_dir)
     idx = master_idx.get(nav.test_id, None)
     if idx is None or len(idx) < 1:
         log.error('no index entry for %s', nav.test_id)

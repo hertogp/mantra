@@ -48,6 +48,7 @@ class MethodFilter(logging.Filter):
             frame = frame.f_back
 
         del frame
+        rv = '{}()'.format(rv) if not rv.endswith('>') else rv
         return rv
 
     def filter(self, record):
@@ -56,44 +57,40 @@ class MethodFilter(logging.Filter):
         return True
 
 
-# format log records
+def setup(app_name, log_file):
+    'setup app global logger plus handlers'
+    msgfmt = ('%(asctime)s %(name)s [%(threadName)s | '
+              '%(levelname)s] %(funcName)10s: %(message)s'
+              )
+    datefmt = '%Y%m%d %H:%M:%S'
+    formatter = logging.Formatter(fmt=msgfmt, datefmt=datefmt)
 
-msgfmt = ('%(asctime)s %(name)s [%(threadName)s | '
-          '%(levelname)s] %(funcName)10s: %(message)s'
-          )
-datefmt = '%Y%m%d %H:%M:%S'
-formatter = logging.Formatter(fmt=msgfmt, datefmt=datefmt)
+    # the root logger
 
+    logger = logging.getLogger(app_name)
+    logger.setLevel(logging.DEBUG)
+    logger.addFilter(MethodFilter())
 
-# the root logger
+    # root filehandler
 
-logger = logging.getLogger(cfg.app_name)
-logger.setLevel(logging.DEBUG)
-logger.addFilter(MethodFilter())
+    fh = logging.handlers.RotatingFileHandler(log_file, 1024*1024, 3)
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(formatter)
+    # fh.addFilter(MethodFilter())
+    logger.addHandler(fh)
 
+    # root console handler
 
-# root filehandler
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    ch.setFormatter(formatter)
+    # ch.addFilter(MethodFilter())
+    logger.addHandler(ch)
 
-fh = logging.handlers.RotatingFileHandler(cfg.log_file, 1024*1024, 3)
-fh.setLevel(logging.DEBUG)
-fh.setFormatter(formatter)
-# fh.addFilter(MethodFilter())
-logger.addHandler(fh)
-
-
-# root console handler
-
-ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
-ch.setFormatter(formatter)
-# ch.addFilter(MethodFilter())
-logger.addHandler(ch)
-
-logger.debug('created root logger {}'.format(logger.name))
+    logger.debug('created root logger {}'.format(logger.name))
 
 
 def getlogger(*args):
     name = '.'.join([cfg.app_name, '.'.join(args)])
     logr = logging.getLogger(name)
-    logger.debug('created logger %s', logr.name)
     return logr

@@ -20,11 +20,14 @@ import logging
 # TODO: make utils independent of cfg or Mantra in general
 # - cannot import utils in tests without import the whole app
 # App imports
-from config import cfg
-
+# from config import cfg
 
 # -- Globals
-log = logging.getLogger(cfg.app_name)
+APP_NAME = 'Mantra'      # sameas cfg.app_name
+MSTR_IDX = 'mantra.idx'  # in cfg.dst_dir topdir
+TEST_IDX = 'mtr.idx'     # in cfg.dst_dir subdir's (per test)
+
+log = logging.getLogger('Mantra')  # should be cfg.app_name?
 log.debug('logging via %s', log.name)
 
 DOM_ID_TYPES = [
@@ -33,8 +36,6 @@ DOM_ID_TYPES = [
     'display',    # page display div
 ]
 
-MSTR_IDX = 'mantra.idx'  # in cfg.dst_dir topdir
-TEST_IDX = 'mtr.idx'     # in cfg.dst_dir subdir's (per test)
 # status/compilation flags
 F_PLAYABLE = 1  # src updated since last compilation
 F_OUTDATED = 2  # dst is older than src
@@ -201,10 +202,10 @@ def hashfnv64(text, salt=''):
     return base64.urlsafe_b64encode(hash_b)[:-1].decode('ascii')
 
 
-def get_test_id(filename):
+def get_test_id(topdir, filename):
     'fnv64 hash of basename and category of a src filename'
     basename = os.path.basename(filename)
-    category = os.path.relpath(os.path.dirname(filename), cfg.src_dir)
+    category = os.path.relpath(os.path.dirname(filename), topdir)
     data = category.encode('ascii') + basename.encode('ascii')
     hash_n = 0xcbf29ce484222325
     for b in data:
@@ -432,16 +433,17 @@ class MantraIdx:
 
         return self
 
-def idx_by_dst():
+
+def idx_by_dst(dst_top):
     'collect index entries by dst_dir/<test_id>/mtr.idx-files'
     # XXX: update so orpahned subdirs without mtr.idx are added as well
-    index = {}  # [test_id] -> cfg.dst_dir's mtr.idx index entry
-    for idx_file in yield_files(cfg.dst_dir, TEST_IDX):
+    index = {}  # [test_id] -> dst_top dir's mtr.idx index entry
+    for idx_file in yield_files(dst_top, TEST_IDX):
         with open(idx_file, 'rt') as fh:
             # dta = json.loads(fh.read())
             idx = MtrIdx(*json.loads(fh.read())) # dta)
         dst_dir = os.path.dirname(idx_file)
-        test_id = os.path.relpath(dst_dir, cfg.dst_dir)
+        test_id = os.path.relpath(dst_dir, dst_top)
         if test_id == '.':
             continue  # skip files in dst_dir topdir
         if test_id != idx.test_id:
@@ -453,24 +455,25 @@ def idx_by_dst():
     return index
 
 
-def idx_by_src():
-    'create index entries by valid test.md files in cfg.src_dir'
+def idx_by_src(src_top, dst_top, extensions):
+    'create index entries by valid test.md files in src_top dir'
     index = {}
-    pats = ['.{}'.format(x) for x in cfg.tst_ext]
-    for src_file in yield_files(cfg.src_dir, pats):
+    pats = ['.{}'.format(x) for x in extensions]
+    for src_file in yield_files(src_top, pats):
         src_dir = os.path.dirname(src_file)
-        category = os.path.relpath(src_dir, cfg.src_dir)
+        category = os.path.relpath(src_dir, src_top)
         if category == '.':
-            continue  # skip files in cfg.src_dir itself
-        test_id = get_test_id(src_file)
-        dst_dir = os.path.join(cfg.dst_dir, test_id)
+            continue  # skip files in src_top itself
+        test_id = get_test_id(src_top, src_file)
+        dst_dir = os.path.join(dst_top, test_id)
         log.debug('add %s', test_id)
         index[test_id] = MtrIdx(src_file, file_checksum(src_file), dst_dir,
-                                category, get_test_id(src_file), 0, 0, 0, 0)
+                                category, get_test_id(src_top, src_file),
+                                0, 0, 0, 0)
     return index
 
 
-def idx_flags(idx):
+def idx_flags(idx, dst_top):
     'run checks on idx and return error-flags as cflags'
     cflags = 0
     try:
@@ -479,12 +482,12 @@ def idx_flags(idx):
         elif idx.src_hash != file_checksum(idx.src_file):
             cflags |= F_OUTDATED  # src differs from what was compiled
 
-        # a missing cfg.dst_dir/test_id means not playable, needs compiling
-        dst_dir = os.path.join(cfg.dst_dir, idx.test_id)
+        # a missing dst_top test_id means not playable, needs compiling
+        dst_dir = os.path.join(dst_top, idx.test_id)
         if not os.access(dst_dir, os.R_OK):
             return cflags | F_OUTDATED
 
-        # required files in cfg.dst_dir/test_id/
+        # required files in dst_top/test_id/
         for fname in ['mtr.his', 'mtr.idx', 'quiz.yml']:
             if not os.access(os.path.join(dst_dir, fname), os.R_OK):
                 log.debug('missing dst file %s/%s', idx.test_id, fname)
@@ -496,9 +499,9 @@ def idx_flags(idx):
             log.debug('invalid numq %s', idx.numq)
             return cflags | F_DSTERROR
 
-        # required cfg.dst_dir/test_id/q<ddd>.json files
+        # required dst_top/test_id/q<ddd>.json files
         for qnr in range(numq):
-            qfile = os.path.join(cfg.dst_dir,
+            qfile = os.path.join(dst_top,
                                  idx.test_id,
                                  'q{:03d}.json'.format(qnr))
             if not os.access(qfile, os.R_OK):
@@ -516,10 +519,10 @@ def idx_flags(idx):
     return cflags
 
 
-def mtr_idx_create():
+def mtr_idx_create(src_top, dst_top, ext):
     'create a fresh dst_dir/mtr.idx of playable/compilable tests'
-    master = idx_by_dst()
-    for test_id, idx in idx_by_src().items():
+    master = idx_by_dst(dst_top)
+    for test_id, idx in idx_by_src(src_top, dst_top, ext).items():
         if test_id not in master:
             master[test_id] = idx  # a fresh, non-compiled source
         elif idx.src_file != master[test_id].src_file:
@@ -530,14 +533,14 @@ def mtr_idx_create():
 
     # run some checks and raise any flags if necessary
     for test_id, idx in master.items():
-        master[test_id] = idx._replace(cflags=idx_flags(idx))
+        master[test_id] = idx._replace(cflags=idx_flags(idx, dst_top))
 
     # log results
     for test_id, idx in master.items():
         log.debug('%s -> %s', test_id, idx.src_file)
 
     # write to disk
-    with open(os.path.join(cfg.dst_dir, MSTR_IDX), 'wt') as f:
+    with open(os.path.join(dst_top, MSTR_IDX), 'wt') as f:
         json.dump(master, f)
 
     return master
@@ -545,12 +548,8 @@ def mtr_idx_create():
 
 # XXX: use a decorator to cache reads based on ctime: only
 # read the file if its ctime is more recent than what's in memory
-def mtr_idx_read():
+def mtr_idx_read(dst_top):
     'read master index from disk'
-    with open(os.path.join(cfg.dst_dir, MSTR_IDX), 'rt') as fp:
+    with open(os.path.join(dst_top, MSTR_IDX), 'rt') as fp:
         dct = json.load(fp)
     return dict((k, MtrIdx(*idx)) for k, idx in dct.items())
-
-
-def idx_getstats(idx):
-    pass

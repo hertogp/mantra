@@ -56,7 +56,7 @@ def test_table(categories):
     'load mantra.idx from disk and return as html.Table'
     idxs = []
     try:
-        idxs = utils.mtr_idx_read().values()
+        idxs = utils.mtr_idx_read(cfg.dst_dir).values()
     except FileNotFoundError:
         pass
     rows = [
@@ -96,7 +96,7 @@ def test_table(categories):
 def category_options():
     'setup categories for category filter on test table'
     try:
-        tests = utils.mtr_idx_read().values()  # only need idx values
+        tests = utils.mtr_idx_read(cfg.dst_dir).values()  # only idx values
     except OSError:
         tests = []
     rv = []
