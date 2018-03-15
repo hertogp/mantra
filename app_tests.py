@@ -22,6 +22,8 @@ log.debug('logging via %s', log.name)
 
 # - PAGE globals
 PATH = '/tests'
+PAGE_ID = 'app-{}'.format(PATH)
+ID = '{}-{{}}'.format(__name__).format
 CONTROLS = utils.get_domid('controls', PATH)
 DISPLAY = utils.get_domid('display', PATH)
 TESTS = []  # Global list of available tests
@@ -51,6 +53,70 @@ def test_actions(idx):
 
     return rv
 
+def action_icon(test_id, flag):
+    klass = {
+        'U': ('fas fa-sync fa-1x', 'update'),
+        'P': ('far fa-play-circle fa-1x', 'run'),
+        'C': ('fas fa-wrench fa-1x', 'compile'),
+        'O': ('fas fa-child', 'revert')
+    }
+    button, action = klass.get(flag)
+    return dcc.Link(
+        html.I(className=button, title=action),
+        href='/{};{}'.format(action, test_id),
+        className='btn-awesome')
+
+
+def action_menu(test_id, flag):
+    flags = {
+        'U': 'run compile preview delete'.split(),
+        'P': 'run preview delete'.split(),
+        'C': 'compile delete'.split(),
+        'O': 'run preview revert delete'.split()
+    }
+    act = flags.get(flag, ['run', 'compile', 'preview', 'delete'])
+    links = [dcc.Link(x, href='/{};{}'.format(x, test_id)) for x in act]
+    return html.Div(className="dropdown",
+                    children=[
+                        html.I(className='fa fa-ellipsis-v dropbtn'),
+                        html.Div(
+                            className='dropdown-content',
+                            id='app-menu-content',
+                            children=links)
+                    ])
+
+
+def test_table2(categories):
+    'load mantra.idx from disk and return as html.Table'
+    idxs = utils.MantraIdx(cfg.src_dir, cfg.dst_dir)
+    rows = [
+        # Header row
+        html.Tr([
+            html.Th('Tests'),
+            html.Th(),
+            html.Th(),
+            html.Th(),
+
+        ])
+    ]
+    for test_id, flag, src, category in idxs:
+        if len(categories) and category not in categories:
+            continue
+
+        # see mantra.css for no_op to flag inactive link
+        linkClassName = '' if flag in 'UPO' else 'no_op'
+        row = html.Tr([
+            html.Td(action_icon(test_id, flag)),
+            html.Td(html.A(href='/run;{}'.format(test_id),
+                           children=os.path.basename(src),
+                           className=linkClassName,
+                           )),
+            html.Td(category),
+            html.Td(action_menu(test_id, flag)),
+        ])  # , title=rowTitle)
+        rows.append(row)
+
+    return html.Table(rows)
 
 def test_table(categories):
     'load mantra.idx from disk and return as html.Table'
@@ -107,112 +173,19 @@ def category_options():
 
 _layout = html.Div(
     className='row',
-    id='app-tests',
+    id=PAGE_ID,
     children=[
         # Controls | Html table
         html.Div(
-            className='four columns',
+            className='twelve columns',
             # style={ 'margin-left' : 0 },
             children=[
-
-                # test mode
-                html.Div([
-                    html.B('Mode:'),
-                    dcc.RadioItems(
-                        id='tests-mode',
-                        options=[
-                            {'value': 'exam', 'label': 'Exam'},
-                            {'value': 'train', 'label': 'Train'},
-                            {'value': 'flash', 'label': 'Flash'}
-                        ],
-                        value='train',
-                        style={'display': 'inline-block'},
-                        labelStyle={'display': 'inline'},
-                    ),
-                ], style={'display': 'block'}),
-
-                # test take MAX QUESTIONs
-                html.Div([
-                    dcc.Checklist(
-                        id='tests-limit-maxq',
-                        options=[{'value': 'yes', 'label': ' '}],
-                        values=[],
-                        style={'display': 'inline-block'},
-                        labelStyle={'display': 'inline-block'},
-                    ),
-                    html.B('Max '),
-                    dcc.Input(
-                        id='tests-max',
-                        type='number',
-                        min=0,
-                        value=10,
-                        style={'display': 'inline-block',
-                               'width': '5em',
-                               'height': '1.2em'
-                               },
-                    ),
-                    html.Spacer(' '),
-                    html.Label('questions',
-                               style={'display': 'inline-block'}
-                               )
-                ], style={'width': '100%'}),
-
-                # limit time for test run
-                html.Div([
-                    dcc.Checklist(
-                        id='tests-limit-time',
-                        options=[{'value': 'yes', 'label': ' '}],
-                        values=[],
-                        style={'display': 'inline-block'},
-                        labelStyle={'display': 'inline-block'},
-                    ),
-                    html.B('Max '),
-                    dcc.Input(
-                        id='tests-max-time',
-                        type='number',
-                        min=0,
-                        value=20,
-                        style={'display': 'inline-block',
-                               'width': '5em',
-                               'height': '1.2em'
-                               },
-                    ),
-                    html.Spacer(' '),
-                    html.Label('minutes',
-                               style={'display': 'inline-block'}
-                               )
-                ], style={'width': '100%'}),
-
-                html.Div([
-                    html.B('Options: ',
-                           style={'display': 'inline-block'}
-                           ),
-                    dcc.Checklist(
-                        id='tests-options',
-                        options=[
-                            {'value': 'opt-skip-known',
-                             'label': 'skip easy questions'},
-                            {'value': 'opt-random-q',
-                             'label': 'randomize questions'},
-                            {'value': 'opt-random-a',
-                             'label': 'randomize answers'},
-                            {'value': 'opt-show-p',
-                             'label': 'show progress'},
-                            {'value': 'opt-show-score',
-                             'label': 'show running score'},
-                        ],
-                        values=['opt-random-q', 'opt-random-a'],
-                        style={'display': 'block'},
-                        labelStyle={'display': 'block'},
-                    )
-                ]),
-
                 # category dropdown filter
                 html.Div(
                     # className='three columns',
                     children=[
                         dcc.Dropdown(
-                            id='tests-category',
+                            id=ID('category'),
                             value=[],
                             multi=True,
                             placeholder='Category ...',
@@ -222,9 +195,10 @@ _layout = html.Div(
                 ]),
 
                 html.Div(
-                    className='eight columns',
+                    className='twelve columns',
                     id=DISPLAY,
-                    children=['loading ...']
+                    children=[
+                        html.Div('loading ...')]
                 ),
 
 ])
@@ -239,24 +213,11 @@ def layout(nav, controls):
 # -- Page controls
 @app.callback(
     dd.Output(CONTROLS, 'children'),
-    [dd.Input('tests-category', 'value'),
-     dd.Input('tests-mode', 'value'),
-     dd.Input('tests-max', 'value'),
-     dd.Input('tests-options', 'values'),
-     dd.Input('tests-limit-maxq', 'values'),
-     dd.Input('tests-limit-time', 'values'),
-     dd.Input('tests-max-time', 'value'),
-     ])
-def controls(cats, mode, maxq, options, limit_maxq, limit_time, max_time):
+    [dd.Input(ID('category'), 'value')])
+def controls(category):
     'store page state in cache and controls for revisits'
     controls = json.dumps([
-        ('tests-category', 'value', cats),
-        ('tests-mode', 'value', mode),
-        ('tests-max', 'value', maxq),
-        ('tests-options', 'values', options),
-        ('tests-limit-maxq', 'values', limit_maxq),
-        ('tests-limit-time', 'values', limit_time),
-        ('tests-max-time', 'value', max_time),
+        (ID('category'), 'value', category),
     ])
     log.debug('save controls %s', controls)
     return controls
@@ -267,10 +228,9 @@ def controls(cats, mode, maxq, options, limit_maxq, limit_time, max_time):
     dd.Output(DISPLAY, 'children'),
     [dd.Input(CONTROLS, 'children')])
 def display(controls):
-    log.debug('tests display %s', controls)
     controls = json.loads(controls)
     categories = []
     for id_, attr, val in controls:
-        if id_ == 'tests-category':
+        if id_ == ID('category'):
             categories = val
-    return test_table(categories)
+    return test_table2(categories)

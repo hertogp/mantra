@@ -368,7 +368,7 @@ class MantraIdx:
         for frel in rgx_iter_files(self.src_dir, self.include, self.exclude):
             src = os.path.join(self.src_dir, frel)
             cat = os.path.dirname(frel)
-            test_id = fnv64(os.path.basename(frel), cat)
+            test_id = hashfnv64(os.path.basename(frel), cat)
             dst = os.path.join(self.dst_dir, test_id, 'mtr.idx')
             dst_mtime = os.path.getmtime(dst) if os.path.isfile(dst) else 0
             src_mtime = os.path.getmtime(src)  # should exist.

@@ -52,21 +52,8 @@ def compiler(nav):
         log.error('no index entry for %s', nav.test_id)
         return False
 
-    rv = qparse.convert(idx)
-
     log.debug('starting on %s' % nav.test_id)
-
-    # get dest dir for compiler output
-    # - or put dst_root = cfg.dst_dir in idx?
-    # qz = qparse.Quiz(idx)
-
-    # log any errors in qz to app log
-    # display qparse log results in case of errors
-    # log.debug('%s tags: %s', nav.test_id, qz.tags)
-    # log.debug('%s meta: %s', nav.test_id, qz.meta)
-    # log.debug('%s qstn: %s', nav.test_id, len(qz.qstn))
-
-    # del qz
+    rv = qparse.convert(idx)
 
     return True
 
@@ -86,14 +73,13 @@ def layout(nav, controls):
     return utils.set_controls(_layout, controls)
 
 
-# - Controls Cacheing
+# - controls caching
 @app.callback(
     dd.Output(CONTROLS, 'children'),
     [dd.Input('app-nav', 'children')],
     [dd.State(CONTROLS, 'children')])
 def controls(nav, controls):
     controls = json.loads(controls) if controls else []
-    log.debug('save controls: %s', controls)
     return json.dumps(controls)
 
 

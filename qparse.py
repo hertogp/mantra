@@ -4,6 +4,7 @@ import os
 import shutil
 import copy
 import time
+import weakref
 import urllib.request
 import json
 import pypandoc as pp
@@ -43,6 +44,20 @@ log.setLevel(logging.DEBUG)
 # - Quiz is the entry point and it's __init__ sets up the logger
 # TLS = threading.local()
 
+class Cached(type):
+    'meta class to return job by ID or create new one with ID'
+    # python3 cookbook, recipe 9.13: Metaclass to control instance creation
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__cache = weakref.WeakValueDictionary()
+
+    def __call__(self, *args):
+        if args in self.__cache:
+            return self.__cache[args]
+        else:
+            obj = super().__call__(*args)
+            self.__cache[args] = obj
+        return obj
 
 def as_block(key, value):
     'return (key,value)-combination as a block element'
@@ -591,6 +606,75 @@ def _copy_files(src_dst):
             log.exception('copy failed %s -> %s', src, dst)
 
 
+class Compiler(metaclass=Cached):
+    'Compiler(job_id).start(args) will run in its own thread'
+
+    def __init__(self, job):
+        self.job = job
+        self.msgs = []  # compiler status msgs
+        self.running = False
+        self.name = threading.currentThread().name  # caller's threadname
+
+    def start(self, args):
+        if self.running:
+            return self
+        threading.Thread(target=self.run, args=args).start()
+        return self
+
+    def run(self, *args):
+        'runs a compile job'
+        self.running = True
+        self.name = threading.currentThread().name
+
+        idx = args[0]
+        self.logfile = os.path.join(idx.dst_dir, 'mtr.log')
+        handler = logging.FileHandler(self.logfile)
+        handler.setFormatter(FORMAT)
+        handler.addFilter(self.name)
+        log.addHandler(handler)
+        log.info('Parsing source: %s', idx.src_file)
+
+        # parse the source file -> p.meta, p.tags, p.qstn
+        p = Parser(idx).parse()
+
+        # clear output directory (carefully)
+        log.info('Delete (most) files:')
+        for fname in utils.glob_files(idx.dst_dir, '*'):
+            fname = os.path.join(idx.dst_dir, fname)
+            if fname != self.logfile and not fname.endswith('.png'):
+                log.info('- del %s', fname)
+                os.remove(fname)
+
+        # save to dst_dir
+        log.info('Add new files:')
+        for nr, q in enumerate(p.qstn):
+            qfname = os.path.join(idx.dst_dir, 'q{:03d}.json'.format(nr))
+            q.save(qfname)
+            log.debug('- add %s', qfname)
+        log.info('Copy images (if needed):')
+        _copy_files(p.imgs)  # copy any newer/missing images
+
+        # create mtr.idx
+        log.info('meta is %r', p.meta)
+        idx = idx._replace(cflags=utils.F_PLAYABLE,
+                           numq=len(p.qstn),
+                           grade=p.meta.get('grade', 0))
+        fname = os.path.join(idx.dst_dir, 'mtr.idx')
+        with open(fname, 'wt') as fh:
+            fh.write(json.dumps(idx))
+            log.info('Created %s', fname)
+            for fld in idx._fields:
+                log.info('- %-8s: %s', fld, getattr(idx, fld))
+
+        # create quiz.json
+        log.debug('meta:')
+        for k, v in p.meta.items():
+            log.debug('%-12s: %s', k, v)
+
+        # give UI some time to display logfile contents
+        time.sleep(2)
+
+
 def convert(idx):
     'convert <src_dir>/path_to_srcfile to <dst_dir>/<test_id>/-files'
     # Add test_id specific handler for this logger
@@ -606,7 +690,8 @@ def convert(idx):
 
     # clear output directory (carefully)
     log.info('Delete (most) files:')
-    for fname in utils.yield_files(idx.dst_dir, '.*'):
+    for fname in utils.glob_files(idx.dst_dir, '*'):
+        fname = os.path.join(idx.dst_dir, fname)
         if fname != TLS.logfile and not fname.endswith('.png'):
             log.info('- del %s', fname)
             os.remove(fname)

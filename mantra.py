@@ -34,10 +34,11 @@ for msg in config.errors:
 for msg in config.warnings:
     log.warning(msg)
 
-# remove lingering mtr.log files (server interrupted during compile)
 utils.mtr_idx_create(config.cfg.src_dir,
                      config.cfg.dst_dir,
                      config.cfg.tst_ext)
+
+# remove lingering mtr.log files (server interrupted during compile)
 for fname in utils.glob_files(cfg.dst_dir, ['[!.]*/mtr.log']):
     log.debug('removing residue (%s)', fname)
     os.remove(os.path.join(cfg.dst_dir, fname))
@@ -96,7 +97,7 @@ def urlparms(href):
 
 # pylint: disable=block-comment-should-start-with-#, E265
 
-# -- LAYOUT
+# -- MANTRA MAIN LAYOUT
 
 PAGES = {
     '/': app_tests,
