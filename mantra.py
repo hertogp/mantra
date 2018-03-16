@@ -34,9 +34,7 @@ for msg in config.errors:
 for msg in config.warnings:
     log.warning(msg)
 
-utils.mtr_idx_create(config.cfg.src_dir,
-                     config.cfg.dst_dir,
-                     config.cfg.tst_ext)
+utils.MantraIdx(config.cfg.src_dir, config.cfg.dst_dir).save()
 
 # remove lingering mtr.log files (server interrupted during compile)
 for fname in utils.glob_files(cfg.dst_dir, ['[!.]*/mtr.log']):

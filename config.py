@@ -79,7 +79,9 @@ _DEFAULTS = (
     ('stylesheets', [
         '/static/css/chriddyp.css',
         '/static/css/fontawesome-all.css',
-        '/static/css/mantra.css'
+        '/static/css/mantra.css',
+        '/static/css/w3.css',
+
     ]),
     ('scripts', [])
 )
@@ -150,5 +152,3 @@ for msg in errors:
 if len(errors):
     print('Aborting..!')
     raise SystemExit(1)
-
-warnings.append('delme: bogus message!')

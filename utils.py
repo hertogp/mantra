@@ -5,10 +5,10 @@ Utilities for Mantra.
 
 import os
 import re
+import weakref
 import base64
 import struct
 import hashlib
-import pathlib
 import time
 import json
 import fnmatch
@@ -27,7 +27,7 @@ APP_NAME = 'Mantra'      # sameas cfg.app_name
 MSTR_IDX = 'mantra.idx'  # in cfg.dst_dir topdir
 TEST_IDX = 'mtr.idx'     # in cfg.dst_dir subdir's (per test)
 
-log = logging.getLogger('Mantra')  # should be cfg.app_name?
+log = logging.getLogger('Mantra')  # hard coded: avoid import config
 log.debug('logging via %s', log.name)
 
 DOM_ID_TYPES = [
@@ -36,28 +36,16 @@ DOM_ID_TYPES = [
     'display',    # page display div
 ]
 
-# status/compilation flags
-F_PLAYABLE = 1  # src updated since last compilation
-F_OUTDATED = 2  # dst is older than src
-F_DSTERROR = 4  # dst files not ok (eg subdir != mtr.idx.test_id)
-F_SRCERROR = 8  # src files not ok (eg src deleted or missing files)
+# -- Utils constructs
 
 MtrIdx = namedtuple('MtrIdx', [
-    'src_file',      # abspath to source file
-    'src_hash',      # to see if it has changed
-    'dst_dir',      # where compiled version ends up
-    'category',      # subdir(s) under src_root
-    'test_id',       # original test_id
-    'grade',         # the hash of (filename, category)
-    'score',         # last score
-    'numq',          # number of questions in the directory
-    'cflags',        # flags to signal status
+    'flag',      # status flag for the test
+    'src',       # abspath to source file
+    'category',  # subdir(s) under src_root
+    'test_id',   # original test_id
 ])
 
-# -- Utils constructs
-# Mantra's urls look like:
-#   http://netloc:8050/path;param?query=arg#frag
-# nav = UrlNav(...), then if needed: nav = nav._replace(key=val)
+# Mantra's urls look like: http://netloc:8050/path;param?query=arg#frag
 UrlNav = namedtuple('UrlNav', [
     'href',        # original url
     'query',       # decoded as dict, if any
@@ -70,8 +58,6 @@ UrlNav = namedtuple('UrlNav', [
 
 
 # -- dumpers
-
-
 class Jsonify(json.JSONEncoder):
     '''
     turn any unjsonifiable elements into repr(elm..)
@@ -109,6 +95,25 @@ def trace(f):
         log.debug(' %s', jsondump(rv))
         return rv
     return wrapper
+
+
+class Cached(type):
+    'meta class to return job by ID or create new one with ID'
+    # python3 cookbook, recipe 9.13: Metaclass to control instance creation
+    # worker = Worker(uniq_id, other, args) -> always same instance
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__cache = weakref.WeakValueDictionary()
+
+    def __call__(self, *args):
+        'return an instance, either cached or created new'
+        if args in self.__cache:
+            return self.__cache[args]
+        else:
+            obj = super().__call__(*args)
+            self.__cache[args] = obj
+            log.debug('created new obj %s', obj)
+        return obj
 
 
 class Proxy(object):
@@ -238,37 +243,7 @@ def file_checksum(filename, block_size=65536):
 
 # -- FILE operations
 
-
-def find_files(topdirs, patterns, recurse=True):
-    topdirs = [topdirs] if isinstance(topdirs, str) else topdirs
-    patterns = [patterns] if isinstance(patterns, str) else patterns
-    topdirs = [pathlib.Path(x).expanduser().resolve() for x in topdirs]
-    for topdir in topdirs:
-        if not topdir.is_dir():
-            continue
-        globdir = topdir.rglob if recurse else topdir.glob
-        for pattern in patterns:
-            for fname in globdir(pattern):
-                if not fname.is_file():
-                    continue
-                yield str(fname)
-
-
-def yield_files(topdir, patterns, recurse=True):
-    'yield filenames matching a pattern or patterns'
-    patterns = [patterns] if isinstance(patterns, str) else patterns
-    cpatterns = [re.compile(p) for p in patterns]
-    for path, dirs, files in os.walk(topdir):
-        for fname in files:
-            for cp in cpatterns:
-                if cp.search(fname):
-                    yield os.path.join(path, fname)
-                    break
-        if not recurse:
-            break
-
-
-def rgx_iter_files(topdir, include=None, exclude=None):
+def rgx_files(topdir, include=None, exclude=None):
     'yield rgx included & not rgx excluded filepaths relative to topdir'
     include = [re.compile('.*')] if include is None else include
     exclude = [] if exclude is None else exclude
@@ -295,12 +270,15 @@ def glob_files(topdir, includes=None, excludes=None):
     for dirname, subdirs, files in os.walk(topdir):
         reldir = os.path.relpath(dirname, topdir)
         for fname in files:
+            # no normpath just yet to allow globs like '[!.]*/mtr.idx'
             relpath = os.path.join(reldir, fname)
             if not any(r.match(relpath) for r in accept):
                 continue
             if any(r.match(relpath) for r in ignore):
                 continue
-            yield relpath
+            # loose any ./ or //'s .. etc
+            yield os.path.normpath(relpath)
+
 
 class MantraIdx:
     'the index of tests based on src.md and its mtr.idx, img.idx files'
@@ -324,8 +302,11 @@ class MantraIdx:
             self.sync()
 
     def __iter__(self):
-        for k, v in self.idx.items():
-            yield (k, *v)
+        for k in self.idx:
+            yield self.idx[k]
+
+    def test_id(self, test_id):
+        return self.idx.get(test_id, None)
 
     def sync(self):
         'sync index to files present on disk'
@@ -339,7 +320,7 @@ class MantraIdx:
             with open(fname, 'wt') as fh:
                 fh.write(json.dumps(self.idx))
         except OSError:
-            print('error: could not save mantra.idx')
+            log.error('could not save mantra.idx')
 
         return self
 
@@ -350,7 +331,7 @@ class MantraIdx:
             with open(fname, 'rt') as fh:
                 self.idx = json.loads(fh.read())
         except OSError:
-            print('error: could not read %s' % fname)
+            log.error('could not read %s' % fname)
 
         return self
 
@@ -360,23 +341,7 @@ class MantraIdx:
         exclude = self.EXCLUDE if exclude is None else exclude
         self.include = [re.compile(fnmatch.translate(p)) for p in include]
         self.exclude = [re.compile(fnmatch.translate(p)) for p in exclude]
-        self.dst_inc = [re.compile(fnmatch.translate('[!.]**/mtr.idx'))]
-        return self
-
-    def _add_srcs(self):
-        'add idx entries based on sources'
-        for frel in rgx_iter_files(self.src_dir, self.include, self.exclude):
-            src = os.path.join(self.src_dir, frel)
-            cat = os.path.dirname(frel)
-            test_id = hashfnv64(os.path.basename(frel), cat)
-            dst = os.path.join(self.dst_dir, test_id, 'mtr.idx')
-            dst_mtime = os.path.getmtime(dst) if os.path.isfile(dst) else 0
-            src_mtime = os.path.getmtime(src)  # should exist.
-            # flags: C(reate) dst, U(pdate) dst, P(lay) dst
-            flag = 'U' if src_mtime > dst_mtime else 'P'
-            flag = 'C' if dst_mtime == 0 else flag  # special case 'updatable'
-            self.idx[test_id] = (flag, src, cat)
-
+        self.dst_mtr = [re.compile(fnmatch.translate('[!.]**/mtr.idx'))]
         return self
 
     def _read_img_idx(self, fname):
@@ -387,7 +352,7 @@ class MantraIdx:
         except OSError:
             return []  # simply might not be there
         except Exception:
-            print('error reading json encoded img index %s' % fname)
+            log.error('reading json encoded img index %s' % fname)
             return []
         return imgs
 
@@ -395,29 +360,44 @@ class MantraIdx:
         'return python obj from mtr.idx file or None in case of errors'
         try:
             with open(fname) as fh:
-                obj = json.loads(fh.read())
+                return MtrIdx(*json.loads(fh.read()))
         except OSError:
-            print('error reading mtr idx %s' % fname)
-            return None
+            log.error('read error %r' % fname)
         except Exception:
-            print('error reading json encoded mtr idx %s' % fname)
-            return None
-        return obj
+            log.error('json decode error %r' % fname)
+        return None
+
+    def _add_srcs(self):
+        'add idx entries based on sources'
+        for frel in rgx_files(self.src_dir, self.include, self.exclude):
+            src = os.path.join(self.src_dir, frel)
+            cat = os.path.dirname(frel)
+            test_id = hashfnv64(os.path.basename(frel), cat)
+            dst = os.path.join(self.dst_dir, test_id, 'mtr.idx')
+            dst_mtime = os.path.getmtime(dst) if os.path.isfile(dst) else 0
+            src_mtime = os.path.getmtime(src)  # should exist.
+            # flags: C(reate) dst, U(pdate) dst, P(lay) dst
+            flag = 'U' if src_mtime > dst_mtime else 'P'
+            flag = 'C' if dst_mtime == 0 else flag  # special case 'updatable'
+            self.idx[test_id] = MtrIdx(flag, src, cat, test_id)
+
+        return self
 
     def _add_dsts(self):
         'add/update idx entries based on destinations'
-        for frel in rgx_iter_files(self.dst_dir, self.dst_inc):
+        for frel in rgx_files(self.dst_dir, self.dst_mtr):
             if frel.count('/') != 1:
-                print('error: weirdly placed mtr.idx', frel)
+                log.error('weirdly placed mtr.idx', frel)
                 continue
 
             test_id = os.path.dirname(frel)
             if test_id not in self.idx:
                 # flag: O(rphaned) but playable (hopefully)
+                log.debug('Orphan found %r (source is missing)', test_id)
                 fname = os.path.join(self.dst_dir, test_id, 'mtr.idx')
                 idx = self._read_mtr_idx(fname)
-                print(test_id, idx)
-                self.idx[test_id] = ('O', 'orig_src.md', 'orig_cat')
+                if idx is not None:
+                    self.idx[test_id] = idx._replace(flag='O')
                 continue
 
             # set flag to U(pdateable) if at least 1 src.img is newer
@@ -427,129 +407,8 @@ class MantraIdx:
                 stime = os.path.getmtime(src) if os.path.isfile(src) else 0
                 dtime = os.path.getmtime(dst) if os.path.isfile(dst) else 0
                 if stime > dtime:
-                    f, src, cat = self.idx[test_id]
-                    self.idx[test_id] = ('U', src, cat)  # at least 1 newer img
+                    f, src, cat, _ = self.idx[test_id]
+                    self.idx[test_id] = MtrIdx('U', src, cat, test_id)
                     break
 
         return self
-
-
-def idx_by_dst(dst_top):
-    'collect index entries by dst_dir/<test_id>/mtr.idx-files'
-    # XXX: update so orpahned subdirs without mtr.idx are added as well
-    index = {}  # [test_id] -> dst_top dir's mtr.idx index entry
-    for idx_file in yield_files(dst_top, TEST_IDX):
-        with open(idx_file, 'rt') as fh:
-            # dta = json.loads(fh.read())
-            idx = MtrIdx(*json.loads(fh.read())) # dta)
-        dst_dir = os.path.dirname(idx_file)
-        test_id = os.path.relpath(dst_dir, dst_top)
-        if test_id == '.':
-            continue  # skip files in dst_dir topdir
-        if test_id != idx.test_id:
-            # somebody changed test_id-dir name?
-            log.debug('test_ids donot match %s vs %s', test_id, idx.test_id)
-            idx = idx._replace(cflags=idx.cflags | F_DSTERROR)
-        index[test_id] = idx
-        log.debug('add %s', test_id)
-    return index
-
-
-def idx_by_src(src_top, dst_top, extensions):
-    'create index entries by valid test.md files in src_top dir'
-    index = {}
-    pats = ['.{}'.format(x) for x in extensions]
-    for src_file in yield_files(src_top, pats):
-        src_dir = os.path.dirname(src_file)
-        category = os.path.relpath(src_dir, src_top)
-        if category == '.':
-            continue  # skip files in src_top itself
-        test_id = get_test_id(src_top, src_file)
-        dst_dir = os.path.join(dst_top, test_id)
-        log.debug('add %s', test_id)
-        index[test_id] = MtrIdx(src_file, file_checksum(src_file), dst_dir,
-                                category, get_test_id(src_top, src_file),
-                                0, 0, 0, 0)
-    return index
-
-
-def idx_flags(idx, dst_top):
-    'run checks on idx and return error-flags as cflags'
-    cflags = 0
-    try:
-        if not os.access(idx.src_file, os.R_OK):
-            cflags |= F_SRCERROR  # src not available/readable
-        elif idx.src_hash != file_checksum(idx.src_file):
-            cflags |= F_OUTDATED  # src differs from what was compiled
-
-        # a missing dst_top test_id means not playable, needs compiling
-        dst_dir = os.path.join(dst_top, idx.test_id)
-        if not os.access(dst_dir, os.R_OK):
-            return cflags | F_OUTDATED
-
-        # required files in dst_top/test_id/
-        for fname in ['mtr.his', 'mtr.idx', 'quiz.yml']:
-            if not os.access(os.path.join(dst_dir, fname), os.R_OK):
-                log.debug('missing dst file %s/%s', idx.test_id, fname)
-                cflags |= F_DSTERROR + F_OUTDATED
-
-        try:
-            numq = int(idx.numq)
-        except (TypeError, ValueError):
-            log.debug('invalid numq %s', idx.numq)
-            return cflags | F_DSTERROR
-
-        # required dst_top/test_id/q<ddd>.json files
-        for qnr in range(numq):
-            qfile = os.path.join(dst_top,
-                                 idx.test_id,
-                                 'q{:03d}.json'.format(qnr))
-            if not os.access(qfile, os.R_OK):
-                log.debug('missing (some) q<ddd>-files')
-                cflags |= F_DSTERROR + F_OUTDATED
-                break
-        else:
-            if numq > 0:
-                cflags |= F_PLAYABLE  # no break, all q's are there
-
-    except AttributeError as e:
-        log.debug('corrupt %s: %s', idx, repr(e))
-        return F_DSTERROR
-
-    return cflags
-
-
-def mtr_idx_create(src_top, dst_top, ext):
-    'create a fresh dst_dir/mtr.idx of playable/compilable tests'
-    master = idx_by_dst(dst_top)
-    for test_id, idx in idx_by_src(src_top, dst_top, ext).items():
-        if test_id not in master:
-            master[test_id] = idx  # a fresh, non-compiled source
-        elif idx.src_file != master[test_id].src_file:
-            # adopt src's src_file and flag output dir as erronuous
-            ix = master[test_id]
-            master[test_id] = ix._replace(cflags=ix.cflags | F_DSTERROR,
-                                          src_file=idx.src_file)
-
-    # run some checks and raise any flags if necessary
-    for test_id, idx in master.items():
-        master[test_id] = idx._replace(cflags=idx_flags(idx, dst_top))
-
-    # log results
-    for test_id, idx in master.items():
-        log.debug('%s -> %s', test_id, idx.src_file)
-
-    # write to disk
-    with open(os.path.join(dst_top, MSTR_IDX), 'wt') as f:
-        json.dump(master, f)
-
-    return master
-
-
-# XXX: use a decorator to cache reads based on ctime: only
-# read the file if its ctime is more recent than what's in memory
-def mtr_idx_read(dst_top):
-    'read master index from disk'
-    with open(os.path.join(dst_top, MSTR_IDX), 'rt') as fp:
-        dct = json.load(fp)
-    return dict((k, MtrIdx(*idx)) for k, idx in dct.items())

@@ -4,7 +4,6 @@ import os
 import shutil
 import copy
 import time
-import weakref
 import urllib.request
 import json
 import pypandoc as pp
@@ -44,20 +43,6 @@ log.setLevel(logging.DEBUG)
 # - Quiz is the entry point and it's __init__ sets up the logger
 # TLS = threading.local()
 
-class Cached(type):
-    'meta class to return job by ID or create new one with ID'
-    # python3 cookbook, recipe 9.13: Metaclass to control instance creation
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.__cache = weakref.WeakValueDictionary()
-
-    def __call__(self, *args):
-        if args in self.__cache:
-            return self.__cache[args]
-        else:
-            obj = super().__call__(*args)
-            self.__cache[args] = obj
-        return obj
 
 def as_block(key, value):
     'return (key,value)-combination as a block element'
@@ -374,7 +359,7 @@ class Parser(object):
     ATTR_KEYWORDS = ['tags:', 'answer:', 'explanation:', 'section:']
 
     def __init__(self, idx):
-        self.idx = idx    # src to be compiled
+        self.idx = idx    # src.idx to be compiled
         self.meta = {}    # doc's yaml meta data
         self.tags = []    # document tags (from meta)
         self.qstn = []    # list of individual Question's or front matter
@@ -383,7 +368,7 @@ class Parser(object):
         self.flags = []   # [sS][iI][dD]
 
     def parse(self):
-        doc_ast = PandocAst.from_file(self.idx.src_file)
+        doc_ast = PandocAst.from_file(self.idx.src)
         self._docmeta(doc_ast.meta)            # process meta data
 
         for level, header in doc_ast.headers:
@@ -461,12 +446,15 @@ class Parser(object):
                     if src_path.startswith('http'):
                         continue
                     # it should be a file on disk ...
-                    dst_path = '{}/{}'.format(self.idx.dst_dir, src_path)
+                    dst_path = os.path.join(cfg.dst_dir,
+                                            self.idx.test_id,
+                                            src_path)
+                    # '{}/{}'.format(self.idx.dst_dir, src_path)
                     v[-1][0] = dst_path  # is relative to dst_dir
-                    src_dir = os.path.dirname(self.idx.src_file)
+                    src_dir = os.path.dirname(self.idx.src)
                     self.imgs.append(
                          (os.path.join(src_dir, src_path),
-                          os.path.join(self.idx.dst_dir, dst_path))
+                          os.path.join(cfg.dst_dir, dst_path))
                     )
 
             self._ast.append(as_block(key, val))  # append as normal paragraph
@@ -606,60 +594,76 @@ def _copy_files(src_dst):
             log.exception('copy failed %s -> %s', src, dst)
 
 
-class Compiler(metaclass=Cached):
+class Compiler(metaclass=utils.Cached):
     'Compiler(job_id).start(args) will run in its own thread'
 
     def __init__(self, job):
-        self.job = job
+        self.job = job  # test_id as job_id
         self.msgs = []  # compiler status msgs
         self.running = False
-        self.name = threading.currentThread().name  # caller's threadname
+        self.logfile = ''
 
-    def start(self, args):
+    def start(self, nav, cfg):
         if self.running:
+            log.debug('Compiler returning running self %r', self)
             return self
-        threading.Thread(target=self.run, args=args).start()
+        self.cfg = cfg
+        self.nav = nav
+        log.debug('start compile job for %r', nav)
+        # threadname=job (ie test_id) for ThreadFilter later on
+        threading.Thread(target=self._run, name=self.job).start()
         return self
 
-    def run(self, *args):
-        'runs a compile job'
+    def _run(self):
+        'run the compile job in a new thread'
         self.running = True
-        self.name = threading.currentThread().name
+        log.debug('Start compile job for %s', self.job)
 
-        idx = args[0]
-        self.logfile = os.path.join(idx.dst_dir, 'mtr.log')
+        # pick up job details via test_id in Mantra Index
+        idxs = utils.MantraIdx(self.cfg.src_dir, self.cfg.dst_dir).sync()
+        idx = idxs.test_id(self.job)
+        if idx is None:
+            log.debug('No idx entry for job %r', self.job)
+            self.running = False
+            return
+
+        # add Handler, captures job log msgs to specific logfile
+        dst_dir = os.path.join(self.cfg.dst_dir, idx.test_id)
+        os.makedirs(dst_dir, exist_ok=True)
+        self.logfile = os.path.join(dst_dir, 'mtr.log')  # for this job
+        log.debug('logging to %s', self.logfile)
         handler = logging.FileHandler(self.logfile)
         handler.setFormatter(FORMAT)
-        handler.addFilter(self.name)
+        handler.addFilter(ThreadFilter(self.job))
         log.addHandler(handler)
-        log.info('Parsing source: %s', idx.src_file)
-
-        # parse the source file -> p.meta, p.tags, p.qstn
-        p = Parser(idx).parse()
+        log.info('Parsing source: %s', idx.src)
 
         # clear output directory (carefully)
         log.info('Delete (most) files:')
-        for fname in utils.glob_files(idx.dst_dir, '*'):
-            fname = os.path.join(idx.dst_dir, fname)
+        for fname in utils.glob_files(dst_dir,
+                                      includes=['*'],
+                                      excludes=['./mtr.log', '*.png']
+                                      ):
+            fname = os.path.join(dst_dir, fname)
             if fname != self.logfile and not fname.endswith('.png'):
                 log.info('- del %s', fname)
                 os.remove(fname)
 
+        # parse the source file -> p.meta, p.tags, p.qstn
+        p = Parser(idx).parse()
+
         # save to dst_dir
         log.info('Add new files:')
         for nr, q in enumerate(p.qstn):
-            qfname = os.path.join(idx.dst_dir, 'q{:03d}.json'.format(nr))
+            qfname = os.path.join(dst_dir, 'q{:03d}.json'.format(nr))
             q.save(qfname)
             log.debug('- add %s', qfname)
         log.info('Copy images (if needed):')
-        _copy_files(p.imgs)  # copy any newer/missing images
+        _copy_files(p.imgs)  # copy images
 
         # create mtr.idx
-        log.info('meta is %r', p.meta)
-        idx = idx._replace(cflags=utils.F_PLAYABLE,
-                           numq=len(p.qstn),
-                           grade=p.meta.get('grade', 0))
-        fname = os.path.join(idx.dst_dir, 'mtr.idx')
+        idx = idx._replace(flag='P')
+        fname = os.path.join(dst_dir, 'mtr.idx')
         with open(fname, 'wt') as fh:
             fh.write(json.dumps(idx))
             log.info('Created %s', fname)
@@ -670,70 +674,12 @@ class Compiler(metaclass=Cached):
         log.debug('meta:')
         for k, v in p.meta.items():
             log.debug('%-12s: %s', k, v)
-
-        # give UI some time to display logfile contents
-        time.sleep(2)
-
-
-def convert(idx):
-    'convert <src_dir>/path_to_srcfile to <dst_dir>/<test_id>/-files'
-    # Add test_id specific handler for this logger
-    TLS.logfile = os.path.join(idx.dst_dir, 'mtr.log')
-    TLS._handler = logging.FileHandler(TLS.logfile)
-    TLS._handler.setFormatter(FORMAT)
-    TLS._handler.addFilter(ThreadFilter(threading.current_thread().name))
-    log.addHandler(TLS._handler)
-    log.info('Parsing source: %s', idx.src_file)
-
-    # parse the source file -> p.meta, p.tags, p.qstn
-    p = Parser(idx).parse()
-
-    # clear output directory (carefully)
-    log.info('Delete (most) files:')
-    for fname in utils.glob_files(idx.dst_dir, '*'):
-        fname = os.path.join(idx.dst_dir, fname)
-        if fname != TLS.logfile and not fname.endswith('.png'):
-            log.info('- del %s', fname)
-            os.remove(fname)
-
-    # save to dst_dir
-    log.info('Add new files:')
-    for nr, q in enumerate(p.qstn):
-        qfname = os.path.join(idx.dst_dir, 'q{:03d}.json'.format(nr))
-        q.save(qfname)
-        log.debug('- add %s', qfname)
-    log.info('Copy images (if needed):')
-    _copy_files(p.imgs)  # copy any newer/missing images
-
-    # create mtr.idx
-    log.info('meta is %r', p.meta)
-    idx = idx._replace(cflags=utils.F_PLAYABLE,
-                       numq=len(p.qstn),
-                       grade=p.meta.get('grade', 0))
-    fname = os.path.join(idx.dst_dir, 'mtr.idx')
-    with open(fname, 'wt') as fh:
-        fh.write(json.dumps(idx))
-        log.info('Created %s', fname)
-        for fld in idx._fields:
-            log.info('- %-8s: %s', fld, getattr(idx, fld))
-
-    # create quiz.json
-    log.debug('meta:')
-    for k, v in p.meta.items():
-        log.debug('%-12s: %s', k, v)
-
-    # remove compile job specific handler
-    try:
-        log.debug('all work is done, bye!')
-        time.sleep(2)
-        log.removeHandler(TLS._handler)
-        os.remove(TLS.logfile)
-    except OSError:
-        log.exception('Could not remove compiler logfile')
-    except Exception:
-        log.exception('TLS error, could not remove TLS._handler, thread died?')
-
-    pass
+        log.info('All done!')
+        # give UI some time to display logfile contents & remove handler
+        log.info('Going to sleep')
+        time.sleep(4)
+        log.info('Dying now')
+        log.removeHandler(handler)
 
 
 class Quiz(object):
@@ -748,8 +694,8 @@ class Quiz(object):
             TLS.idx, TLS.cfg = idx, cfg
             self.setlogger()
 
-            log.debug('Compiling %s', idx.src_file)
-            log.debug('Saving to %s/', idx.dst_dir)
+            log.debug('Compiling %s', idx.src)
+            log.debug('Saving to %s/', cfg.dst_dir)
 
             p = Parser(idx).parse()
             self.meta = p.meta
@@ -767,7 +713,7 @@ class Quiz(object):
 
             self.save()
         except Exception as e:
-            log.debug('Error parsing markdown file: %s', TLS.idx.src_file)
+            log.debug('Error parsing markdown file: %s', TLS.idx.src)
             raise QError('Error parsing markdown file: {}'.format(e))
 
     def __del__(self):
