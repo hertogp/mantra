@@ -207,6 +207,10 @@ _layout = html.Div(
                 html.Div('loading ...', id=DISPLAY)
             ]),
 
+        html.Progress(
+            max=100, value=60
+        ),
+
         # modal display
         html.Div(
             html.Div(
@@ -225,7 +229,7 @@ _layout = html.Div(
                                  className='w3-container')
                     ]),
                 ],
-                    className='w3-modal-content'),
+                    className='w3-modal-content w3-animate-top w3-card-4'),
                 className='w3-modal',
                 style={'display': 'none'},
                 id=ID('modal-1')),
@@ -265,9 +269,14 @@ class QueryHandler(metaclass=utils.Cached):
         threading.Thread(target=self._run, name=self.job).start()
         return self
 
+    @classmethod
+    def find(cls, *args):
+        'find instance for args or return None'
+        return cls._Cached__cache.get(args, None)
+
     def _run(self):
         self.running = True
-        log.debug('QueryHandler %s started', self.job)
+        log.debug('QueryHandler(%s) - started', self.job)
         for action in self.nav.query.get('action', []):
             meth = getattr(self, 'do_{}'.format(action), None)
             if meth is None:
@@ -276,12 +285,7 @@ class QueryHandler(metaclass=utils.Cached):
             else:
                 self.msgs.append('-> {}'.format(action))
             meth()
-            log.debug(self.msgs)
-            time.sleep(1)
-
-    @classmethod
-    def find(self, job):
-        return super().find_obj(job)
+            time.sleep(1)  # give modal update callback time to fire
 
     def do_delete(self):
         dst_dir = os.path.join(self.cfg.dst_dir, self.nav.test_id)
@@ -333,10 +337,20 @@ def reset_url(pathname):
 
 @app.callback(
     dd.Output(ID('modal-1'), 'style'),
-    [dd.Input(ID('modal-close'), 'n_clicks')],
+    [dd.Input(ID('modal-close'), 'n_clicks'),
+     dd.Input(ID('modal-text'), 'n_clicks')],
     [dd.State(ID('modal-1'), 'style')])
-def toggle_modal(n_close, style):
+def toggle_modal(n_close, n_modal, style):
     'modal close button was clicked, so hide the modal'
+    n_close = 0 if n_close is None else n_close
+    n_modal = 0 if n_modal is None else n_modal
+    clicks = n_close + n_modal
+    style = {'display': 'none'} if clicks > 0 else style
+    return style
+    log.debug('[%s] <- %s', n_close, style)
+    style = {'display': 'none'} if n_close > 0 else style
+    log.debug('[%s] -> %s', n_close, style)
+    # return style
     if n_close is None:  # in case n_clicks was not specified in _layout
         return style     # - this is a no-op (initial callback on load)
     elif n_close == 0:   # same case, but with initial n_clicks=0 in layout
@@ -357,13 +371,11 @@ def toggle_updates(style, nvals, nav):
     ON = '500'       # once/second
     OFF = '86400000'  # once/day
     nav = utils.UrlNav(*json.loads(nav))
-    qh = QueryHandler(nav.test_id)
-    if qh and qh.running:
-        log.debug('got a running qh -> return ON')
-        return ON
-    else:
-        log.debug('no running qh -> return OFF')
-        return OFF
+    qh = QueryHandler.find(nav.test_id)
+    rv = ON if qh and qh.running else OFF
+    msg = 'running -> ON' if qh and qh.running else 'not found -> OFF'
+    log.debug('QueryHandler(%s) - %s', nav.test_id, msg)
+    return rv
 
 
 @app.callback(
@@ -375,11 +387,11 @@ def update_modal(nvals, nav, kids):
     'display QueryHandler.msgs while it is running'
     nav = utils.UrlNav(*json.loads(nav))
     log.debug('[%s] update_modal', nvals)
-    qh = QueryHandler(nav.test_id)
+    qh = QueryHandler.find(nav.test_id)
     if qh and qh.running:
-        # display last 25 lines
+        log.debug(' - return %s QueryHandler.msgs', len(qh.msgs))
         return html.Pre('\n'.join(qh.msgs))
-    log.debug('returning kids %s', kids)
+    log.debug(' - returning %s kids', len(kids))
     return kids
 
 

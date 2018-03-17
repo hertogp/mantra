@@ -160,6 +160,7 @@ app.layout = html.Div([
                          ]
                      ),
                  ]),
+
         # store current pathname + derived variables for all pages
         html.Div(id='app-nav', style=STYLES['header-hidden']),
 

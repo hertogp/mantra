@@ -112,7 +112,7 @@ class Cached(type):
         else:
             obj = super().__call__(*args)
             self.__cache[args] = obj
-            log.debug('created new obj %s', obj)
+            log.debug('new obj %s for %s', obj, args)
         return obj
 
 
