@@ -285,19 +285,24 @@ class QueryHandler(metaclass=utils.Cached):
             else:
                 self.msgs.append('-> {}'.format(action))
             meth()
-            time.sleep(1)  # give modal update callback time to fire
+            time.sleep(2)  # give modal update callback time to fire
 
     def do_delete(self):
+        'delete compiled output files'
         dst_dir = os.path.join(self.cfg.dst_dir, self.nav.test_id)
         for fname in utils.glob_files(dst_dir, ['*']):
             fullname = os.path.join(dst_dir, fname)
             log.debug('del %s', fullname)
-            # os.remove(fullname)
+            os.remove(fullname)
             self.msgs.append('rm {}'.format(fullname))
-            # time.sleep(2)
-        # shutil.rmtree(dst_dir)
+        shutil.rmtree(dst_dir)
         self.msgs.append('rmtree {}'.format(dst_dir))
         return self
+
+    def do_clear_history(self):
+        'clear logged history of tests'
+        pass
+
 
 
 # -- Page controls

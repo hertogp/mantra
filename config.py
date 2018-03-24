@@ -1,9 +1,11 @@
 # -*- encoding: utf-8 -*-
 from collections import namedtuple
 import os
-import yaml
-
-# config uses print instead of log.py, so log.py can import config
+from ruamel.yaml import YAML
+from logging import getLogger
+# - globs
+yaml = YAML(typ='safe')
+log = getLogger('Mantra')     # hardcoded, so logger.py can import config
 
 # MANTRA dirs & files
 # nb <name> is a cfg.name attribute, while
@@ -80,7 +82,7 @@ _DEFAULTS = (
         '/static/css/chriddyp.css',
         '/static/css/fontawesome-all.css',
         '/static/css/mantra.css',
-        '/static/css/w3.css',
+        # '/static/css/w3.css',
 
     ]),
     ('scripts', [])
@@ -91,17 +93,17 @@ cfg = Conf(*[item[1] for item in _DEFAULTS])
 
 try:
     with open('mantra.yml', 'rt') as fh:
-        usrcfg = yaml.safe_load(fh) or {}
+        usrcfg = yaml.load(fh) or {}
     # only use known, valid fields (ie Conf._fields)
     update = dict((k, v) for (k, v) in usrcfg.items() if hasattr(cfg, k))
     cfg = cfg._replace(**update)
 except FileNotFoundError:
     pass  # user supplied 'mantra.yaml' is optional
 except AttributeError:
-    print('mantra.yaml does not yield a dict?')
+    log.error('mantra.yaml does not yield a dict?')
     raise SystemExit(0)
 except ValueError as e:
-    print('Error in yaml config {!r}'.format(e))
+    log.error('Error in yaml config %r', e)
     raise SystemExit(0)
 
 abspaths = {
@@ -146,9 +148,9 @@ if not os.access(cfg.src_dir, os.R_OK):
     errors.append('cannot read {!r}'.format(cfg.src_dir))
 
 for msg in warnings:
-    print('warning:', msg)
+    log.warning('warning: %s', msg)
 for msg in errors:
-    print('error:', msg)
+    log.error('error: %s', msg)
 if len(errors):
-    print('Aborting..!')
+    log.error('Aborting..!')
     raise SystemExit(1)

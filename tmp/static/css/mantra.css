@@ -1,0 +1,58 @@
+
+/* Tile1 style
+ * -------------------------------------------------------------- */
+
+.tiles {
+    position: relative;
+    display: block;
+}
+
+
+/* tile border */
+
+.tile1, .tile2 {
+    border: 1px solid #ccc;
+    max-width: 600px;
+    width: 500px;
+    display: inline-block;
+    position: relative;
+    margin: 0 0px 5px 3px;
+}
+
+.tile1:hover,.tile2:hover {
+    box-shadow: 1px 1px darkgrey;
+}
+
+.tile1 * {
+    margin-left: 25px;
+}
+
+/* tile parts */
+.tile1 > .tile-title {
+    font-weight: bold;
+    font-size: large;
+    /* margin-left: 30px; */
+}
+
+.tile1 > .tile-subtitle {
+    color: #777;
+    font-size: medium;
+    /* margin-left: 35px; */
+}
+
+.tile1 > .tile-score, .tile-attempts, .tile-numq {
+    color: #666!important;
+    font-size: small;
+    display: inline-block;
+}
+
+.tile1 > img {
+    position: absolute;
+    top: 5px;
+    left: 2px;
+    display: block;
+    max-width: 25px;
+    margin-left: 1px;
+    width: 20px;
+}
+
