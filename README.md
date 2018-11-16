@@ -26,6 +26,3 @@ ln -s ~/dev/mantra/static <root-dir>/mantra/static
 mantra
 ```
 
-
-
-
